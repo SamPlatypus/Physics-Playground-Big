@@ -1,0 +1,244 @@
+@import 'tailwindcss';
+@import '@fontsource/chakra-petch/latin-500.css';
+@import '@fontsource/chakra-petch/latin-600.css';
+@import '@fontsource/chakra-petch/latin-700.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
+@theme {
+  --font-display: 'Chakra Petch', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
+
+  --color-void: #03050a;
+  --color-panel: #070c17;
+  --color-panel-2: #0b1222;
+  --color-line: rgb(86 227 255 / 0.18);
+  --color-neon: #38e1ff;
+  --color-neon-soft: #9ff0ff;
+  --color-plasma: #ff5ad8;
+  --color-lime: #7dffb0;
+  --color-amber: #ffbf4d;
+  --color-danger: #ff5470;
+  --color-ink: #d9f6ff;
+  --color-ink-dim: #7d95ad;
+}
+
+/* ---------- Mobile viewport hardening ---------- */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--color-void);
+}
+
+body {
+  position: fixed;
+  inset: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.playground-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  /* The canvas owns every gesture: no browser pan, zoom or pull-to-refresh. */
+  touch-action: none;
+  outline: none;
+}
+
+/* ---------- Panels ---------- */
+.hud-panel {
+  background:
+    linear-gradient(180deg, rgb(13 21 38 / 0.9), rgb(6 10 20 / 0.9)) padding-box,
+    linear-gradient(180deg, rgb(86 227 255 / 0.32), rgb(86 227 255 / 0.08)) border-box;
+  border: 1px solid transparent;
+  box-shadow:
+    0 10px 30px -10px rgb(0 0 0 / 0.7),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.hud-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-dim);
+}
+
+.scanlines {
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.025) 0px,
+    rgb(255 255 255 / 0.025) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* ---------- Range sliders (big touch thumbs) ---------- */
+.neon-range {
+  --fill: 50%;
+  --accent: var(--color-neon);
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 36px;
+  background: transparent;
+  touch-action: none;
+  cursor: pointer;
+}
+.neon-range:focus {
+  outline: none;
+}
+.neon-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--accent) 0 var(--fill), rgb(125 149 173 / 0.22) var(--fill) 100%);
+  box-shadow: 0 0 12px -2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.neon-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgb(125 149 173 / 0.22);
+}
+.neon-range::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.neon-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -11px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 40%, #ffffff 0 22%, var(--accent) 24% 100%);
+  border: 3px solid #050a14;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 18px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.neon-range::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 40%, #ffffff 0 22%, var(--accent) 24% 100%);
+  border: 3px solid #050a14;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 18px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.neon-range:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 18px var(--accent);
+}
+
+/* ---------- Animations ---------- */
+@keyframes clear-flash {
+  0% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes clear-sweep {
+  0% {
+    transform: translateY(-10vh);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh);
+    opacity: 0;
+  }
+}
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes spin-rev {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@keyframes hint-float {
+  0%,
+  100% {
+    transform: translate(-50%, 0);
+  }
+  50% {
+    transform: translate(-50%, -5px);
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(125 255 176 / 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 12px rgb(125 255 176 / 0);
+  }
+}
+
+.animate-clear-flash {
+  animation: clear-flash 520ms ease-out forwards;
+}
+.animate-clear-sweep {
+  animation: clear-sweep 520ms cubic-bezier(0.3, 0.6, 0.4, 1) forwards;
+}
+.animate-spin-slow {
+  animation: spin-slow 1.4s linear infinite;
+}
+.animate-spin-rev {
+  animation: spin-rev 2.2s linear infinite;
+}
+.animate-hint {
+  animation: hint-float 2.4s ease-in-out infinite;
+}
+.animate-toast {
+  animation: toast-in 180ms ease-out both;
+}
+.animate-pulse-ring {
+  animation: pulse-ring 600ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin-slow,
+  .animate-spin-rev,
+  .animate-hint {
+    animation-duration: 6s;
+  }
+  .animate-clear-sweep {
+    display: none;
+  }
+}
