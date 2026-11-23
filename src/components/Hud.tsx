@@ -1,9 +1,11 @@
-import { Atom, Check, Recycle, Trash2 } from 'lucide-react'
+import { Atom, Check, Gem, Recycle, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { TapButton } from './TapButton'
 
 interface Props {
   fps: number
   bodies: number
+  debris: number
   max: number
   onClear: () => void
 }
@@ -14,7 +16,7 @@ function fpsTone(fps: number): string {
   return 'text-danger'
 }
 
-export function Hud({ fps, bodies, max, onClear }: Props) {
+export function Hud({ fps, bodies, debris, max, onClear }: Props) {
   const [cleared, setCleared] = useState(false)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
@@ -52,7 +54,18 @@ export function Hud({ fps, bodies, max, onClear }: Props) {
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col leading-none" aria-label={`${bodies} of ${max} bodies`}>
-          <span className="hud-label">Bodies</span>
+          <span className="hud-label flex items-center gap-1.5">
+            Bodies
+            {debris > 0 && (
+              <span
+                className="flex items-center gap-0.5 font-mono text-[10px] tracking-normal text-plasma"
+                aria-label={`${debris} of them debris`}
+              >
+                <Gem className="size-2.5" strokeWidth={2.4} />
+                {debris}
+              </span>
+            )}
+          </span>
           <span className="mt-1 flex items-center gap-1.5 font-mono text-[15px] font-semibold whitespace-nowrap tabular-nums text-ink">
             <span>
               {bodies}
@@ -76,9 +89,8 @@ export function Hud({ fps, bodies, max, onClear }: Props) {
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={handleClear}
+        <TapButton
+          onTap={handleClear}
           aria-label="Clear all bodies"
           className={`flex h-11 shrink-0 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-bold tracking-[0.14em] uppercase transition-colors active:scale-95 ${
             cleared
@@ -88,7 +100,7 @@ export function Hud({ fps, bodies, max, onClear }: Props) {
         >
           {cleared ? <Check className="size-4" strokeWidth={2.6} /> : <Trash2 className="size-4" strokeWidth={2} />}
           <span>{cleared ? 'Cleared' : 'Clear'}</span>
-        </button>
+        </TapButton>
       </div>
     </header>
   )

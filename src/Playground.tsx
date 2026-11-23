@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { PhysicsEngine, type EngineStats, type RapierApi } from './engine/PhysicsEngine'
+import { PhysicsEngine, type EngineStats, type RapierApi, type SingularityState } from './engine/PhysicsEngine'
 import {
   GRAVITY_PRESETS,
   MAX_BODIES,
@@ -7,14 +7,14 @@ import {
   type GravityId,
   type InteractionMode,
   type ShapeKind,
+  type SingularityType,
 } from './engine/constants'
 import { haptics } from './engine/haptics'
 import { peekNextColorCss } from './engine/palette'
 import { usePersistentState } from './hooks/usePersistentState'
 import { Hud } from './components/Hud'
-import { ModeSwitch } from './components/ModeSwitch'
-import { SpawnToolbar } from './components/SpawnToolbar'
-import { EnvironmentDock } from './components/EnvironmentDock'
+import { ControlDeck } from './components/ControlDeck'
+import { ForcesDock } from './components/ForcesDock'
 
 export interface PlaygroundProps {
   rapier: RapierApi
@@ -22,11 +22,22 @@ export interface PlaygroundProps {
 
 const isGravityId = (v: unknown): v is GravityId => GRAVITY_PRESETS.some((p) => p.id === v)
 const isUnit = (v: unknown): v is number => typeof v === 'number' && v >= 0 && v <= 1
-const isMode = (v: unknown): v is InteractionMode => v === 'interact' || v === 'camera'
+const isMode = (v: unknown): v is InteractionMode => v === 'interact' || v === 'camera' || v === 'slice'
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean'
 
-/** Toolbar height (66px buttons + 12px padding) plus its bottom gap. */
-const TOOLBAR_OFFSET = 'calc(max(env(safe-area-inset-bottom), 12px) + 90px)'
+/** Control deck height (48px + 60px rows, gaps and padding) plus its bottom gap. */
+const TOOLBAR_OFFSET = 'calc(max(env(safe-area-inset-bottom), 12px) + 136px)'
+
+const MODE_TOASTS: Record<InteractionMode, string> = {
+  interact: 'Grab · drag shapes to fling them',
+  camera: 'Camera · drag to orbit, pinch to zoom',
+  slice: 'Slice · swipe across shapes to cut them',
+}
+
+const SINGULARITY_NAMES: Record<SingularityType, string> = {
+  blackhole: 'black hole',
+  repulsor: 'repulsor',
+}
 
 export default function Playground({ rapier }: PlaygroundProps) {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -40,8 +51,10 @@ export default function Playground({ rapier }: PlaygroundProps) {
   const [mode, setMode] = usePersistentState<InteractionMode>('pp.mode', 'interact', isMode)
   const [hapticsOn, setHapticsOn] = usePersistentState('pp.haptics', true, isBool)
   const [hasGrabbed, setHasGrabbed] = usePersistentState('pp.hasGrabbed', false, isBool)
+  const [destructible, setDestructible] = usePersistentState('pp.destructible', true, isBool)
 
-  const [stats, setStats] = useState<EngineStats>({ fps: 0, bodies: 0, max: MAX_BODIES })
+  const [stats, setStats] = useState<EngineStats>({ fps: 0, bodies: 0, debris: 0, max: MAX_BODIES })
+  const [singularity, setSingularity] = useState<SingularityState>({ type: null, placed: false })
   const [dockOpen, setDockOpen] = useState(false)
   const [nextColor, setNextColor] = useState(peekNextColorCss)
   const [flashKey, setFlashKey] = useState(0)
@@ -49,7 +62,7 @@ export default function Playground({ rapier }: PlaygroundProps) {
   const [dragging, setDragging] = useState(false)
 
   // Latest settings, read once when the engine boots (later changes go through setters).
-  const initial = useRef({ gravity, restitution, friction, mode })
+  const initial = useRef({ gravity, restitution, friction, mode, destructible })
 
   useEffect(() => {
     const host = hostRef.current
@@ -60,10 +73,14 @@ export default function Playground({ rapier }: PlaygroundProps) {
       restitution: s.restitution,
       friction: s.friction,
       mode: s.mode,
+      destructible: s.destructible,
       onStats: (next) =>
         setStats((prev) =>
-          prev.fps === next.fps && prev.bodies === next.bodies && prev.max === next.max ? prev : next,
+          prev.fps === next.fps && prev.bodies === next.bodies && prev.debris === next.debris && prev.max === next.max
+            ? prev
+            : next,
         ),
+      onSingularityChange: setSingularity,
       onDragChange: (d) => {
         setDragging(d)
         if (d) setHasGrabbed(true)
@@ -87,6 +104,9 @@ export default function Playground({ rapier }: PlaygroundProps) {
   useEffect(() => {
     engineRef.current?.setMode(mode)
   }, [mode])
+  useEffect(() => {
+    engineRef.current?.setDestructible(destructible)
+  }, [destructible])
   useEffect(() => {
     haptics.setEnabled(hapticsOn)
   }, [hapticsOn])
@@ -142,9 +162,21 @@ export default function Playground({ rapier }: PlaygroundProps) {
   const changeMode = useCallback(
     (next: InteractionMode) => {
       setMode(next)
-      showToast(next === 'camera' ? 'Orbit · drag to rotate, pinch to zoom' : 'Grab · drag shapes to fling them')
+      showToast(MODE_TOASTS[next])
     },
     [setMode, showToast],
+  )
+
+  const chooseSingularity = useCallback(
+    (type: SingularityType | null) => {
+      engineRef.current?.setSingularity(type)
+      // Arming a new one: get the drawer out of the way so the arena can be tapped.
+      if (type && !singularity.placed) {
+        setDockOpen(false)
+        showToast(`Tap the arena to place the ${SINGULARITY_NAMES[type]}`)
+      }
+    },
+    [singularity.placed, showToast],
   )
 
   const changeGravity = useCallback(
@@ -158,7 +190,8 @@ export default function Playground({ rapier }: PlaygroundProps) {
   const preset = GRAVITY_PRESETS.find((p) => p.id === gravity) ?? GRAVITY_PRESETS[0]
 
   let hint: string | null = null
-  if (stats.bodies === 0) hint = 'Tap a shape below to spawn it'
+  if (singularity.type && !singularity.placed) hint = `Tap inside the arena to place the ${SINGULARITY_NAMES[singularity.type]}`
+  else if (stats.bodies === 0) hint = 'Tap a shape below to spawn it'
   else if (!hasGrabbed && mode === 'interact' && !dockOpen) hint = 'Touch & drag a shape — let go to fling'
 
   return (
@@ -172,7 +205,7 @@ export default function Playground({ rapier }: PlaygroundProps) {
         </div>
       )}
 
-      <Hud fps={stats.fps} bodies={stats.bodies} max={stats.max} onClear={clearAll} />
+      <Hud fps={stats.fps} bodies={stats.bodies} debris={stats.debris} max={stats.max} onClear={clearAll} />
 
       {hint && !dragging && (
         <div
@@ -194,14 +227,7 @@ export default function Playground({ rapier }: PlaygroundProps) {
         </div>
       )}
 
-      <ModeSwitch
-        mode={mode}
-        onChange={changeMode}
-        hidden={dockOpen}
-        bottom={`calc(${TOOLBAR_OFFSET} + 58px)`}
-      />
-
-      <EnvironmentDock
+      <ForcesDock
         open={dockOpen}
         onClose={() => setDockOpen(false)}
         gravity={gravity}
@@ -214,11 +240,18 @@ export default function Playground({ rapier }: PlaygroundProps) {
         hapticsSupported={haptics.supported}
         onHaptics={setHapticsOn}
         onResetCamera={() => engineRef.current?.resetCamera()}
+        singularity={singularity.type}
+        singularityPlaced={singularity.placed}
+        onSingularity={chooseSingularity}
+        destructible={destructible}
+        onDestructible={setDestructible}
         bottom={TOOLBAR_OFFSET}
         sectionRef={dockRef}
       />
 
-      <SpawnToolbar
+      <ControlDeck
+        mode={mode}
+        onMode={changeMode}
         onSpawn={spawn}
         nextColor={nextColor}
         dockOpen={dockOpen}

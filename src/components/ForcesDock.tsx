@@ -1,17 +1,23 @@
 import {
   ArrowUpFromLine,
   ChevronDown,
+  CircleOff,
+  Disc3,
   Earth,
+  Hammer,
   Moon,
   Mountain,
+  Radiation,
   Rocket,
   RotateCcw,
+  ShieldCheck,
   Vibrate,
   VibrateOff,
   type LucideIcon,
 } from 'lucide-react'
 import { useRef, type CSSProperties, type Ref } from 'react'
-import { GRAVITY_PRESETS, type GravityId } from '../engine/constants'
+import { GRAVITY_PRESETS, type GravityId, type SingularityType } from '../engine/constants'
+import { TapButton } from './TapButton'
 
 interface Props {
   open: boolean
@@ -26,9 +32,20 @@ interface Props {
   hapticsSupported: boolean
   onHaptics: (on: boolean) => void
   onResetCamera: () => void
+  singularity: SingularityType | null
+  singularityPlaced: boolean
+  onSingularity: (type: SingularityType | null) => void
+  destructible: boolean
+  onDestructible: (on: boolean) => void
   bottom: string
   sectionRef?: Ref<HTMLElement>
 }
+
+const SINGULARITY_OPTIONS: { id: SingularityType | null; label: string; Icon: LucideIcon; accent: string }[] = [
+  { id: null, label: 'None', Icon: CircleOff, accent: 'neon' },
+  { id: 'blackhole', label: 'Black hole', Icon: Disc3, accent: 'violet' },
+  { id: 'repulsor', label: 'Repulsor', Icon: Radiation, accent: 'neon' },
+]
 
 const GRAVITY_ICONS: Record<GravityId, LucideIcon> = {
   earth: Earth,
@@ -84,11 +101,11 @@ function NeonSlider({ id, label, value, onChange, minLabel, maxLabel, accent }: 
 }
 
 /**
- * Slide-up drawer for gravity presets and material tuning. It deliberately has
- * no backdrop: the arena stays live and touchable while values are adjusted, so
- * changes can be watched as they apply.
+ * Slide-up "Forces" drawer: gravity presets, singularities, destructibility and
+ * material tuning. It deliberately has no backdrop: the arena stays live and
+ * touchable while values are adjusted, so changes can be watched as they apply.
  */
-export function EnvironmentDock(props: Props) {
+export function ForcesDock(props: Props) {
   const {
     open,
     onClose,
@@ -102,6 +119,11 @@ export function EnvironmentDock(props: Props) {
     hapticsSupported,
     onHaptics,
     onResetCamera,
+    singularity,
+    singularityPlaced,
+    onSingularity,
+    destructible,
+    onDestructible,
     bottom,
     sectionRef,
   } = props
@@ -113,8 +135,8 @@ export function EnvironmentDock(props: Props) {
   return (
     <section
       ref={sectionRef}
-      id="environment-dock"
-      aria-label="Gravity and environment"
+      id="forces-dock"
+      aria-label="Forces and environment"
       aria-hidden={!open}
       inert={!open}
       className={`hud-panel absolute inset-x-3 z-30 flex flex-col sm:left-auto sm:w-[400px] overflow-hidden rounded-[22px] transition-[transform,opacity] duration-250 ease-out ${
@@ -142,15 +164,14 @@ export function EnvironmentDock(props: Props) {
         <div className="flex-1">
           <div className="mx-auto mb-1 h-1 w-10 rounded-full bg-ink-dim/40" />
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold tracking-[0.22em] text-ink uppercase">Environment</h2>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close environment settings"
+            <h2 className="text-sm font-bold tracking-[0.22em] text-ink uppercase">Forces</h2>
+            <TapButton
+              onTap={onClose}
+              aria-label="Close forces settings"
               className="-mr-2 grid size-10 place-items-center rounded-xl text-ink-dim active:scale-95 active:text-neon"
             >
               <ChevronDown className="size-5" />
-            </button>
+            </TapButton>
           </div>
         </div>
       </div>
@@ -168,12 +189,11 @@ export function EnvironmentDock(props: Props) {
             const Icon = GRAVITY_ICONS[preset.id]
             const active = preset.id === gravity
             return (
-              <button
+              <TapButton
                 key={preset.id}
-                type="button"
                 role="radio"
                 aria-checked={active}
-                onClick={() => onGravity(preset.id)}
+                onTap={() => onGravity(preset.id)}
                 className={`flex h-[64px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl border px-0.5 transition-colors active:scale-95 ${
                   active
                     ? 'border-neon/60 bg-neon/15 text-neon shadow-[0_0_18px_-6px_rgb(56_225_255/0.8)]'
@@ -187,7 +207,42 @@ export function EnvironmentDock(props: Props) {
                 <span className={`font-mono text-[10px] tabular-nums ${active ? 'text-neon' : 'text-ink-dim'}`}>
                   {formatG(preset.value)}
                 </span>
-              </button>
+              </TapButton>
+            )
+          })}
+        </div>
+
+        {/* Singularity */}
+        <div className="mt-3.5 flex items-baseline justify-between gap-2">
+          <span className="hud-label">Singularity</span>
+          <span className="truncate text-[11px] text-ink-dim">
+            {singularity
+              ? singularityPlaced
+                ? 'Drag the core to move · tap it to dismiss'
+                : 'Tap the arena to place it'
+              : 'One at a time'}
+          </span>
+        </div>
+        <div role="radiogroup" aria-label="Singularity" className="mt-2 grid grid-cols-3 gap-1.5">
+          {SINGULARITY_OPTIONS.map(({ id, label, Icon, accent }) => {
+            const active = singularity === id
+            const on =
+              accent === 'violet'
+                ? 'border-[#b48bff]/70 bg-[#b48bff]/15 text-[#cdb4ff] shadow-[0_0_18px_-6px_rgb(180_139_255/0.9)]'
+                : 'border-neon/60 bg-neon/15 text-neon shadow-[0_0_18px_-6px_rgb(56_225_255/0.8)]'
+            return (
+              <TapButton
+                key={label}
+                role="radio"
+                aria-checked={active}
+                onTap={() => onSingularity(id)}
+                className={`flex h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 text-[11px] font-bold tracking-[0.06em] uppercase transition-colors active:scale-95 ${
+                  active ? on : 'border-white/6 bg-panel-2/70 text-ink'
+                }`}
+              >
+                <Icon className="size-4 shrink-0" strokeWidth={1.9} />
+                <span className="truncate">{label}</span>
+              </TapButton>
             )
           })}
         </div>
@@ -214,15 +269,26 @@ export function EnvironmentDock(props: Props) {
           />
         </div>
 
-        {/* Device */}
+        {/* Toggles */}
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <button
-            type="button"
+          <TapButton
+            role="switch"
+            aria-checked={destructible}
+            aria-label="Destructible objects"
+            onTap={() => onDestructible(!destructible)}
+            className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-1 text-xs font-bold tracking-[0.08em] uppercase transition-colors active:scale-95 ${
+              destructible ? 'border-amber/50 bg-amber/10 text-amber' : 'border-white/6 bg-panel-2/70 text-ink-dim'
+            }`}
+          >
+            {destructible ? <Hammer className="size-4 shrink-0" /> : <ShieldCheck className="size-4 shrink-0" />}
+            <span className="truncate">{destructible ? 'Destructible on' : 'Destructible off'}</span>
+          </TapButton>
+          <TapButton
             role="switch"
             aria-checked={hapticsOn && hapticsSupported}
             disabled={!hapticsSupported}
-            onClick={() => onHaptics(!hapticsOn)}
-            className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-xs font-bold tracking-[0.12em] uppercase transition-colors active:scale-95 disabled:opacity-45 ${
+            onTap={() => onHaptics(!hapticsOn)}
+            className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-1 text-xs font-bold tracking-[0.08em] uppercase transition-colors active:scale-95 disabled:opacity-45 ${
               hapticsOn && hapticsSupported
                 ? 'border-lime/45 bg-lime/10 text-lime'
                 : 'border-white/6 bg-panel-2/70 text-ink-dim'
@@ -230,14 +296,13 @@ export function EnvironmentDock(props: Props) {
           >
             {hapticsOn && hapticsSupported ? <Vibrate className="size-4" /> : <VibrateOff className="size-4" />}
             {hapticsSupported ? `Haptics ${hapticsOn ? 'on' : 'off'}` : 'No haptics'}
-          </button>
-          <button
-            type="button"
-            onClick={onResetCamera}
-            className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/6 bg-panel-2/70 text-xs font-bold tracking-[0.12em] text-ink uppercase active:scale-95"
+          </TapButton>
+          <TapButton
+            onTap={onResetCamera}
+            className="col-span-2 flex h-11 items-center justify-center gap-2 rounded-xl border border-white/6 bg-panel-2/70 text-xs font-bold tracking-[0.12em] text-ink uppercase active:scale-95"
           >
             <RotateCcw className="size-4" /> Reset view
-          </button>
+          </TapButton>
         </div>
       </div>
     </section>
