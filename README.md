@@ -20,7 +20,7 @@ To try it on an Android phone, open the dev server's network URL in Chrome. For 
 | **Boot** | `await RAPIER.init()` runs behind a loading spinner, and the simulation only mounts once the WASM runtime and the 3D bundle are both ready. A WebGL check and a retry path cover failures. |
 | **Arena** | 8 × 8 × 8 m glass box: lit floor with an anti-aliased glowing grid, fresnel glass walls and ceiling (the ceiling contains inverted gravity), a neon edge frame, and one shadow-casting directional light. |
 | **HUD** | Live FPS (colour-coded), `bodies / 150` with a fill bar, a debris count, and a recycle icon at the cap. An instant **Clear** button flashes a confirmation sweep. |
-| **Control deck** | Two thumb-height rows at the bottom. The top row picks the touch tool (**Grab · Camera · Slice**) and opens **Forces**. The bottom row is the spawner (**Cube · Sphere · Cylinder · Nitro**): tap for one, hold to keep spawning. It fits a 360 px screen without overlap. |
+| **Control deck** | Two thumb-height rows at the bottom. The top row picks the touch tool (**Grab · Camera · Slice**) and opens **Forces**. The bottom row is the spawner (**Cube · Sphere · Cylinder · Nitro**): tap for one, hold to keep spawning. It fits a 360 px screen without overlap, and collapses to a single strip on short landscape screens. |
 | **Touch tools** | *Grab*: one finger grabs, drags and flings bodies. *Camera*: one finger orbits. *Slice*: one finger draws a laser. Two-finger pinch zooms in every tool. |
 | **Shattering** | A hard enough impact (a ~6 m drop, a hard throw, or a nearby blast) shatters a shape into 4–6 faceted debris shards. Toggle it with **Destructible** in the Forces dock. |
 | **Laser slicing** | Swipe in Slice mode to cut every shape the beam crosses: cubes become two prisms, spheres two hemispheres, and cylinders two shorter cylinders or two half-cylinders. The beam leaves a glowing trail and sparks. |
@@ -43,7 +43,7 @@ All physics and rendering live in `src/engine/PhysicsEngine.ts`, outside React. 
 - **Body cap.** Everything counts toward the 150 limit, debris included. When a spawn, fracture or slice needs room, the engine recycles in this order: oldest sleeping debris, oldest debris, oldest sleeping shape, oldest shape. Neighbours of a recycled body are woken so the pile resettles.
 - **Sleeping.** Rapier sleeps each contact island on its own. On top of that, the engine applies explicit thresholds (`SLEEP_SPEED_LIMIT` 0.12 m/s, `SLEEP_ANGULAR_LIMIT` 0.25 rad/s, `SLEEP_TIME_LIMIT` 0.6 s). Once every awake body has stayed under them, the whole scene is put to sleep at once.
   - Forcing individual bodies to sleep inside a moving pile was tried and rejected: frozen bodies hovered when their support moved away, and some were squeezed out through the walls.
-  - A settled pile of 150 drops to about 0.07 ms per physics step.
+  - A settled pile of 150 drops to about 0.06 ms per physics step.
 - **Rolling resistance.** Rapier has none, so slow spheres and cylinders lying on the floor get a small damping term, scaled by the friction slider (so "ice" still glides). Without it they roll for a very long time and never sleep.
 - **Rendering budget.**
   - One `InstancedMesh` per form (8 forms), each sized per instance, so any mix of shapes, halves and debris costs at most 8 draw calls.
@@ -86,6 +86,23 @@ Physics character per shape lives in `src/engine/constants.ts`:
 - **Cylinder:** tall enough to stand as a column or domino, and rolls when it tips over.
 - **Nitro:** dense and dead, with little bounce.
 - **Debris shards:** damped so they settle (and despawn) quickly.
+
+## Performance
+
+Physics cost was measured by stepping the real engine with rendering paused, on a 2.1 GHz Xeon. A mid-range phone is roughly 2–4× slower; a 60 fps frame is 16.7 ms.
+
+| Scenario | Physics step: avg / p95 / max |
+| --- | --- |
+| Spawning 150 bodies (hold-to-spawn pace) | 1.0 / 1.8 / 8.3 ms (one spike) |
+| The same pile settling; fully asleep 4.5 s after spawning stops | 0.4 / 1.7 / 2.8 ms |
+| 150 bodies asleep | 0.06 / 0.2 / 0.4 ms |
+| Black hole crushing 149 bodies into its core | 1.9 / 2.7 / 3.5 ms |
+| 8-block Nitro chain through 100 breakables | 1.1 / 1.8 / 2.9 ms |
+
+Other measures:
+
+- Every material, including the pooled effects, is compiled at startup, so the first grab, cut or blast doesn't hitch on a shader compile.
+- Pixel ratio drops automatically if FPS stays under 45.
 
 ## Project layout
 
@@ -164,4 +181,4 @@ The script checks 68 behaviours.
 
 Strokes that must be fast carry explicit event timestamps. Headless SwiftShader can stall a DevTools touch call for a whole slow frame, which would otherwise make a flick look like "move, pause, lift".
 
-The headless browser renders with SwiftShader on the CPU, so the FPS it reports says nothing about real phones. Physics cost is measured separately; see the numbers above.
+The headless browser renders with SwiftShader on the CPU, so the FPS it reports says nothing about real phones. Physics cost is measured separately; see **Performance** above.

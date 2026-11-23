@@ -236,12 +236,12 @@ export function ForcesDock(props: Props) {
                 role="radio"
                 aria-checked={active}
                 onTap={() => onSingularity(id)}
-                className={`flex h-12 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 text-[11px] font-bold tracking-[0.06em] uppercase transition-colors active:scale-95 ${
+                className={`flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-[10px] font-bold tracking-[0.06em] uppercase transition-colors active:scale-95 ${
                   active ? on : 'border-white/6 bg-panel-2/70 text-ink'
                 }`}
               >
-                <Icon className="size-4 shrink-0" strokeWidth={1.9} />
-                <span className="truncate">{label}</span>
+                <Icon className="size-[18px] shrink-0" strokeWidth={1.9} />
+                <span className="max-w-full truncate">{label}</span>
               </TapButton>
             )
           })}
@@ -276,7 +276,7 @@ export function ForcesDock(props: Props) {
             aria-checked={destructible}
             aria-label="Destructible objects"
             onTap={() => onDestructible(!destructible)}
-            className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-1 text-xs font-bold tracking-[0.08em] uppercase transition-colors active:scale-95 ${
+            className={`flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 text-[11px] font-bold tracking-[0.04em] uppercase transition-colors active:scale-95 ${
               destructible ? 'border-amber/50 bg-amber/10 text-amber' : 'border-white/6 bg-panel-2/70 text-ink-dim'
             }`}
           >
@@ -288,7 +288,7 @@ export function ForcesDock(props: Props) {
             aria-checked={hapticsOn && hapticsSupported}
             disabled={!hapticsSupported}
             onTap={() => onHaptics(!hapticsOn)}
-            className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-1 text-xs font-bold tracking-[0.08em] uppercase transition-colors active:scale-95 disabled:opacity-45 ${
+            className={`flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border px-1 text-[11px] font-bold tracking-[0.04em] uppercase transition-colors active:scale-95 disabled:opacity-45 ${
               hapticsOn && hapticsSupported
                 ? 'border-lime/45 bg-lime/10 text-lime'
                 : 'border-white/6 bg-panel-2/70 text-ink-dim'

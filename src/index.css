@@ -22,6 +22,15 @@
   --color-ink-dim: #7d95ad;
 }
 
+:root {
+  --deck-h: 136px;
+}
+@media (max-height: 500px) {
+  :root {
+    --deck-h: 74px;
+  }
+}
+
 /* ---------- Mobile viewport hardening ---------- */
 html,
 body,

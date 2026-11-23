@@ -75,9 +75,10 @@ export function ControlDeck({ mode, onMode, onSpawn, nextColor, dockOpen, onTogg
       className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-3"
       style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 12px)' }}
     >
-      <div className="hud-panel pointer-events-auto flex flex-col gap-1.5 rounded-[20px] p-1.5">
+      {/* Two rows on phones; one strip on short landscape screens. */}
+      <div className="hud-panel pointer-events-auto flex flex-col gap-1.5 rounded-[20px] p-1.5 [@media(max-height:500px)]:flex-row">
         {/* Row 1: touch tool + forces */}
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 [@media(max-height:500px)]:flex-1">
           <div
             role="radiogroup"
             aria-label="Touch tool"
@@ -118,7 +119,7 @@ export function ControlDeck({ mode, onMode, onSpawn, nextColor, dockOpen, onTogg
         </div>
 
         {/* Row 2: quick spawner */}
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 [@media(max-height:500px)]:flex-1">
           {SHAPES.map(({ kind, label, Icon }) => {
             const nitro = kind === 'nitro'
             const tint = nitro ? '#ff4a3a' : nextColor
@@ -140,7 +141,7 @@ export function ControlDeck({ mode, onMode, onSpawn, nextColor, dockOpen, onTogg
                   if (e.detail === 0) onSpawn(kind)
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className={`relative flex h-[60px] min-w-0 flex-1 flex-col items-center justify-center gap-1 overflow-hidden rounded-2xl border bg-panel-2/80 transition-[transform,background-color] duration-75 active:scale-[0.94] ${
+                className={`relative flex h-[60px] min-w-0 flex-1 flex-col [@media(max-height:500px)]:h-12 items-center justify-center gap-1 overflow-hidden rounded-2xl border bg-panel-2/80 transition-[transform,background-color] duration-75 active:scale-[0.94] ${
                   nitro ? 'border-amber/25 active:bg-danger/15' : 'border-white/5 active:bg-neon/12'
                 }`}
               >

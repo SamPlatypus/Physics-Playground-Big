@@ -25,8 +25,11 @@ const isUnit = (v: unknown): v is number => typeof v === 'number' && v >= 0 && v
 const isMode = (v: unknown): v is InteractionMode => v === 'interact' || v === 'camera' || v === 'slice'
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean'
 
-/** Control deck height (48px + 60px rows, gaps and padding) plus its bottom gap. */
-const TOOLBAR_OFFSET = 'calc(max(env(safe-area-inset-bottom), 12px) + 136px)'
+/**
+ * Control deck height (48px + 60px rows, gaps and padding) plus its bottom gap.
+ * On short landscape screens the deck collapses to a single 60px strip.
+ */
+const TOOLBAR_OFFSET = 'calc(max(env(safe-area-inset-bottom), 12px) + var(--deck-h, 136px))'
 
 const MODE_TOASTS: Record<InteractionMode, string> = {
   interact: 'Grab · drag shapes to fling them',
