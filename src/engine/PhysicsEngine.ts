@@ -33,6 +33,7 @@ import {
   SLICE_SEGMENT_PX,
   SLICE_SEPARATION_SPEED,
   SPAWN_GRACE_SECONDS,
+  TREMOR,
   THROW_MAX_SPEED,
   THROW_SAMPLE_WINDOW_MS,
   materialFriction,
@@ -55,6 +56,7 @@ import {
   formBoundingRadius,
   formVisualScale,
   formVolume,
+  makeForm,
   type Form,
   type FormType,
 } from './forms'
@@ -66,7 +68,7 @@ import {
   createShapeMaterial,
 } from './materials'
 import { createNitroMaterial, type NitroMaterial } from './nitro'
-import { nextSpawnColor } from './palette'
+import { DEFAULT_THEME, THEMES, nextColorIndex, type Theme, type ThemeId } from './themes'
 
 export type RapierApi = typeof RAPIER
 
@@ -83,15 +85,55 @@ export interface SingularityState {
   placed: boolean
 }
 
+/** Where the engine sends sound cues (the AudioManager, or nothing). */
+export interface AudioSink {
+  collision(momentum: number, mass: number, material: MaterialClass): void
+  shatter(size: number): void
+  slice(): void
+  explosion(hop: number): void
+  tremor(duration: number): void
+  singularity(type: SingularityType | null): void
+  freeze(frozen: boolean): void
+  shutter(): void
+}
+
 export interface EngineOptions {
   gravity: number
   restitution: number
   friction: number
   mode: InteractionMode
   destructible: boolean
+  theme?: ThemeId
+  audio?: AudioSink
   onStats?: (stats: EngineStats) => void
   onDragChange?: (dragging: boolean) => void
   onSingularityChange?: (state: SingularityState) => void
+  onFrozenChange?: (frozen: boolean) => void
+  onTremorChange?: (active: boolean) => void
+}
+
+/** One body in a saved scene ("digital taxidermy"). Debris is never saved. */
+export interface SavedBody {
+  type: FormType
+  /** Form dimensions (radius / half extents, see forms.ts). */
+  dimensions: [number, number, number]
+  /** Render scale derived from the dimensions (kept for completeness / inspection). */
+  scale: [number, number, number]
+  isSliced: boolean
+  position: [number, number, number]
+  /** Quaternion x, y, z, w. */
+  rotation: [number, number, number, number]
+  /** Index into the active theme's shape palette (−1 = Nitro). */
+  colorIndex: number
+  material: MaterialClass
+  mass: number
+  sleeping: boolean
+}
+
+export interface SavedScene {
+  version: 1
+  savedAt: number
+  bodies: SavedBody[]
 }
 
 interface PhysObject {
@@ -119,6 +161,12 @@ interface PhysObject {
   fadeOut: boolean
   lastImpactAt: number
   highlighted: boolean
+  /** Index into the theme's shape palette (−1 = Nitro); colour is re-derived on theme change. */
+  colorIndex: number
+  /** Lightness offset (debris shards vary a little from their parent). */
+  shade: number
+  /** Nitro: how many blasts deep in a chain reaction this block is. */
+  chainHop: number
   /** Fracture shard: no contact-force events, never fractures or slices again. */
   isDebris: boolean
   /** Product of a laser cut: can't be sliced again. */
@@ -149,12 +197,15 @@ interface BodyInit {
   angvel?: THREE.Vector3
   /** Explicit mass (fragments / halves split their parent's); otherwise density × volume. */
   mass?: number
-  color: THREE.Color
+  colorIndex: number
+  shade?: number
   isDebris?: boolean
   isSliced?: boolean
   popIn?: boolean
   /** 'spawn' = protected until shortly after the first landing; a number = seconds of protection. */
   grace?: 'spawn' | number
+  /** Create the body asleep (restored scenes that were at rest). */
+  sleeping?: boolean
 }
 
 /** Finger position on the drag plane (unclamped), stamped with the pointer event time in ms. */
@@ -294,6 +345,27 @@ export class PhysicsEngine {
   private readonly nitroMaterial: NitroMaterial
 
   private readonly dirLight: THREE.DirectionalLight
+  private readonly hemiLight: THREE.HemisphereLight
+  private readonly rimLight: THREE.DirectionalLight
+  /** Materials a theme retints. */
+  private readonly themed = {} as {
+    floor: THREE.MeshStandardMaterial
+    outer: THREE.MeshBasicMaterial
+    wall: THREE.ShaderMaterial
+    ceiling: THREE.ShaderMaterial
+    edges: THREE.LineBasicMaterial
+    stars: THREE.PointsMaterial
+    shape: THREE.MeshStandardMaterial
+  }
+  private theme: Theme
+  private readonly audio: AudioSink | null
+  private frozen = false
+  private tremor: { t: number; duration: number; bounces: number } | null = null
+  /** Sim times of the last tremor (diagnostics / tests). */
+  private lastTremor: { start: number; end: number | null } | null = null
+  private lastShakeAt = -Infinity
+  /** Diagnostics: bodies woken by the last tremor trigger. */
+  private tremorWoken = 0
   private readonly tether: THREE.Group
   private readonly tetherLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
   private readonly impactRings: ImpactRings
@@ -363,6 +435,8 @@ export class PhysicsEngine {
     this.restitution = opts.restitution
     this.friction = opts.friction
     this.destructible = opts.destructible
+    this.theme = THEMES[opts.theme ?? DEFAULT_THEME]
+    this.audio = opts.audio ?? null
 
     // ---------- Renderer ----------
     const dpr = window.devicePixelRatio || 1
@@ -389,11 +463,12 @@ export class PhysicsEngine {
     // ---------- Scene ----------
     const bg = new THREE.Color('#03050a')
     this.scene.background = bg
-    this.scene.fog = new THREE.Fog(bg, 22, 58)
+    this.scene.fog = new THREE.Fog(bg.clone(), 22, 58)
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
 
-    this.scene.add(new THREE.HemisphereLight('#9fdcff', '#0a0f1c', 1.15))
+    this.hemiLight = new THREE.HemisphereLight('#9fdcff', '#0a0f1c', 1.15)
+    this.scene.add(this.hemiLight)
     this.dirLight = new THREE.DirectionalLight('#ffffff', 2.4)
     this.dirLight.position.set(5, 14, 7)
     this.dirLight.castShadow = true
@@ -408,15 +483,16 @@ export class PhysicsEngine {
     this.dirLight.shadow.bias = -0.0004
     this.dirLight.shadow.normalBias = 0.025
     this.scene.add(this.dirLight)
-    const rim = new THREE.DirectionalLight('#5fb8ff', 0.6)
-    rim.position.set(-8, 6, -10)
-    this.scene.add(rim)
+    this.rimLight = new THREE.DirectionalLight('#5fb8ff', 0.6)
+    this.rimLight.position.set(-8, 6, -10)
+    this.scene.add(this.rimLight)
 
     this.buildArenaVisuals()
     this.buildStarfield()
 
     // ---------- Instanced body meshes: one draw call per form, whatever the body count ----------
     const shapeMaterial = createShapeMaterial()
+    this.themed.shape = shapeMaterial
     this.nitroMaterial = createNitroMaterial()
     this.materials.push(shapeMaterial, this.nitroMaterial.material)
     this.textures.push(...this.nitroMaterial.textures)
@@ -516,6 +592,8 @@ export class PhysicsEngine {
     this.resetCamera()
 
     document.addEventListener('visibilitychange', this.onVisibility)
+    window.addEventListener('devicemotion', this.onDeviceMotion)
+    this.applyTheme()
     this.warmUpShaders()
     this.fpsWindowStart = performance.now()
     this.rafId = requestAnimationFrame(this.frame)
@@ -580,7 +658,7 @@ export class PhysicsEngine {
       quat,
       angvel: new THREE.Vector3(rnd(), rnd(), rnd()),
       linvel: Math.abs(g) < 0.01 ? new THREE.Vector3(rnd() * 0.75, rnd() * 0.75, rnd() * 0.75) : undefined,
-      color: kind === 'nitro' ? new THREE.Color('#ffffff') : nextSpawnColor(),
+      colorIndex: kind === 'nitro' ? -1 : nextColorIndex(),
       popIn: true,
       grace: 'spawn',
     })
@@ -598,7 +676,8 @@ export class PhysicsEngine {
   setGravity(y: number): void {
     const wasZero = Math.abs(this.gravityY) < 0.01
     this.gravityY = y
-    this.world.gravity = { x: 0, y, z: 0 }
+    const g = this.world.gravity
+    this.world.gravity = { x: this.tremor ? g.x : 0, y, z: this.tremor ? g.z : 0 }
     const nowZero = Math.abs(y) < 0.01
     for (const obj of this.alive) {
       if (!obj.body || obj === this.drag?.obj) continue
@@ -716,6 +795,262 @@ export class PhysicsEngine {
     return this.alive.length
   }
 
+  get isFrozen(): boolean {
+    return this.frozen
+  }
+
+  // ---------- Themes ----------
+
+  setTheme(id: ThemeId): void {
+    const next = THEMES[id]
+    if (!next || next === this.theme) return
+    this.theme = next
+    this.applyTheme()
+  }
+
+  /** Retint the arena, lights and every live instance for the active theme. */
+  private applyTheme(): void {
+    const t = this.theme
+    const bg = this.scene.background as THREE.Color
+    bg.set(t.background)
+    const fog = this.scene.fog as THREE.Fog
+    fog.color.set(t.background)
+    fog.near = t.fogNear
+    fog.far = t.fogFar
+    this.hemiLight.color.set(t.hemiSky)
+    this.hemiLight.groundColor.set(t.hemiGround)
+    this.hemiLight.intensity = t.hemiIntensity
+    this.dirLight.intensity = t.sunIntensity
+    this.rimLight.color.set(t.rim)
+    const m = this.themed
+    m.floor.color.set(t.floor)
+    m.floor.userData.uniforms.uLine.value.set(t.floorLine)
+    m.floor.userData.uniforms.uLineStrength.value = t.floorLineStrength
+    m.outer.color.set(t.outerGround)
+    m.outer.userData.uniforms.uLine.value.set(t.outerLine)
+    m.wall.uniforms.uColor.value.set(t.glass)
+    m.wall.uniforms.uOpacity.value = t.glassOpacity
+    m.ceiling.uniforms.uColor.value.set(t.glass)
+    m.ceiling.uniforms.uOpacity.value = t.glassOpacity * 0.5
+    m.edges.color.set(t.edges)
+    m.edges.opacity = t.edgesOpacity
+    m.stars.color.set(t.stars)
+    m.stars.opacity = t.starsOpacity
+    m.stars.visible = t.starsOpacity > 0
+    m.shape.roughness = t.shapeRoughness
+    m.shape.userData.uniforms.uGlow.value = t.shapeGlow
+    m.shape.userData.uniforms.uRim.value = t.shapeRim
+    // Bodies keep palette indices; re-derive their colours and flag every bucket so
+    // the next frame rewrites instanceColor via setColorAt + needsUpdate.
+    for (const type of FORM_TYPES) {
+      for (const obj of this.visuals[type]) obj.color = this.colorFor(obj.colorIndex, obj.shade)
+      this.colorDirty[type] = true
+    }
+    this.markActive()
+  }
+
+  private colorFor(index: number, shade: number): THREE.Color {
+    if (index < 0) return new THREE.Color('#ffffff') // Nitro: the texture carries the colour
+    const palette = this.theme.shapes
+    const c = new THREE.Color().setStyle(palette[index % palette.length], THREE.SRGBColorSpace)
+    if (shade) c.offsetHSL(0, 0, shade)
+    return c
+  }
+
+  // ---------- Freeze ----------
+
+  /**
+   * Freeze stops world.step() but keeps rendering, so the camera can orbit, pan
+   * and zoom around the paused action. Grab / slice / singularity gestures are
+   * suspended (they need the solver); one finger orbits, two fingers pinch/pan.
+   */
+  setFrozen(frozen: boolean): void {
+    if (frozen === this.frozen) return
+    this.frozen = frozen
+    if (frozen) {
+      if (this.drag) this.endDrag(false)
+      if (this.slice) this.endSlice()
+      if (this.singularityGesture) this.endSingularityGesture(false)
+      this.accumulator = 0
+    }
+    this.audio?.freeze(frozen)
+    this.applyModeToControls()
+    this.markActive()
+    this.opts.onFrozenChange?.(frozen)
+  }
+
+  // ---------- Tremor ----------
+
+  /**
+   * Earthquake: oscillate horizontal gravity (g_x = sin(2πft)·6 m/s²) for 1.2 s
+   * with a few small vertical bounces, then let it decay. Rapier does not wake
+   * sleeping bodies when world.gravity changes, so every body is woken first.
+   */
+  triggerTremor(): boolean {
+    if (this.disposed || this.frozen || this.tremor) return false
+    this.tremorWoken = 0
+    for (const obj of this.alive) {
+      if (!obj.body || obj === this.drag?.obj) continue
+      obj.body.wakeUp()
+      this.tremorWoken++
+    }
+    this.tremor = { t: 0, duration: TREMOR.duration, bounces: 0 }
+    this.lastTremor = { start: this.simTime, end: null }
+    this.calmTime = 0
+    haptics.tremor()
+    this.audio?.tremor(TREMOR.duration)
+    this.opts.onTremorChange?.(true)
+    this.markActive()
+    return true
+  }
+
+  /** Shake gesture: a linear-acceleration spike above 18 m/s² starts a tremor. */
+  private onDeviceMotion = (e: DeviceMotionEvent): void => {
+    const a = e.acceleration
+    let magnitude: number
+    if (a && a.x !== null && a.y !== null && a.z !== null) {
+      magnitude = Math.hypot(a.x, a.y, a.z)
+    } else {
+      const g = e.accelerationIncludingGravity
+      if (!g || g.x === null || g.y === null || g.z === null) return
+      magnitude = Math.abs(Math.hypot(g.x, g.y, g.z) - 9.81)
+    }
+    if (magnitude < TREMOR.shakeThreshold) return
+    const now = performance.now()
+    if (now - this.lastShakeAt < TREMOR.shakeCooldownMs) return
+    this.lastShakeAt = now
+    this.triggerTremor()
+  }
+
+  private stepTremor(): void {
+    const tr = this.tremor
+    if (!tr) return
+    tr.t += FIXED_DT
+    const { duration, frequency, amplitude, attack, release } = TREMOR
+    if (tr.t >= duration) {
+      this.tremor = null
+      if (this.lastTremor) this.lastTremor.end = this.simTime
+      this.world.gravity = { x: 0, y: this.gravityY, z: 0 }
+      this.opts.onTremorChange?.(false)
+      return
+    }
+    // Envelope: quick attack, sustain, then a settling decay to zero at `duration`.
+    const env = Math.min(1, tr.t / attack) * Math.min(1, (duration - tr.t) / release)
+    const gx = Math.sin(2 * Math.PI * frequency * tr.t) * amplitude * env
+    const gz = Math.sin(2 * Math.PI * frequency * 0.73 * tr.t + 1.3) * amplitude * 0.35 * env
+    this.world.gravity = { x: gx, y: this.gravityY, z: gz }
+    // Keep everything awake while the ground shakes (bodies could doze off mid-quake).
+    if (this.stepCount % 6 === 0) {
+      for (const obj of this.alive) if (obj.body && obj !== this.drag?.obj) obj.body.wakeUp()
+    }
+    // A few subtle vertical bounces off the "down" surface.
+    const due = Math.floor((tr.t / duration) * TREMOR.bounces)
+    if (due > tr.bounces && Math.abs(this.gravityY) > 0.01) {
+      tr.bounces = due
+      const up = this.gravityY < 0 ? 1 : -1
+      for (const obj of this.alive) {
+        const body = obj.body
+        if (!body || obj === this.drag?.obj) continue
+        const nearDown =
+          up > 0 ? obj.currPos.y < obj.radius + 0.6 : obj.currPos.y > ARENA.height - obj.radius - 0.6
+        if (!nearDown) continue
+        const dv = TREMOR.bounceSpeed * env * (0.7 + Math.random() * 0.6)
+        body.applyImpulse({ x: 0, y: up * dv * obj.mass, z: 0 }, true)
+      }
+    }
+  }
+
+  // ---------- Digital taxidermy (save / load) ----------
+
+  /** Snapshot of the permanent bodies: debris and despawning bodies are skipped. */
+  serializeScene(): SavedScene {
+    const bodies: SavedBody[] = []
+    for (const o of this.alive) {
+      if (o.isDebris || !o.body || o.dieT !== null) continue
+      bodies.push({
+        type: o.form.type,
+        dimensions: [o.form.d.x, o.form.d.y, o.form.d.z],
+        scale: [o.scale.x, o.scale.y, o.scale.z],
+        isSliced: o.isSliced,
+        position: [o.currPos.x, o.currPos.y, o.currPos.z],
+        rotation: [o.currQuat.x, o.currQuat.y, o.currQuat.z, o.currQuat.w],
+        colorIndex: o.colorIndex,
+        material: o.material,
+        mass: o.mass,
+        sleeping: o.body.isSleeping(),
+      })
+    }
+    return { version: 1, savedAt: Date.now(), bodies }
+  }
+
+  /**
+   * Replace the world with a saved scene. Bodies come back with zero velocity
+   * and the simulation frozen, so the scene holds still until the player thaws it
+   * (bodies that were resting are restored asleep and stay put even then).
+   */
+  loadScene(scene: SavedScene): number {
+    if (this.drag) this.endDrag(false)
+    if (this.slice) this.endSlice()
+    for (const obj of [...this.alive]) this.despawn(obj, 'instant')
+    this.fractureQueue = []
+    this.detonations = []
+    let restored = 0
+    for (const b of scene.bodies.slice(0, MAX_BODIES)) {
+      if (!FORM_TYPES.includes(b.type) || !(b.material in MATERIAL_SPECS)) continue
+      const [x, y, z] = b.position
+      const [qx, qy, qz, qw] = b.rotation
+      if (![x, y, z, qx, qy, qz, qw, ...b.dimensions].every(Number.isFinite)) continue
+      const obj = this.createBody({
+        form: makeForm(b.type, b.dimensions[0], b.dimensions[1], b.dimensions[2]),
+        material: b.material,
+        pos: new THREE.Vector3(x, y, z),
+        quat: new THREE.Quaternion(qx, qy, qz, qw).normalize(),
+        mass: b.mass > 0 ? b.mass : undefined,
+        colorIndex: b.colorIndex,
+        isSliced: b.isSliced,
+        popIn: true,
+        grace: 1,
+        sleeping: b.sleeping,
+      })
+      obj.spawnT = 0.4
+      restored++
+    }
+    this.setFrozen(true)
+    this.markActive()
+    return restored
+  }
+
+  // ---------- Photo mode ----------
+
+  /**
+   * Render a clean full-frame image and encode it as PNG. The render happens
+   * immediately before toBlob (same task), so the drawing buffer is guaranteed
+   * to hold this frame and the capture can't come out blank or black.
+   */
+  capturePhoto(): Promise<Blob | null> {
+    const saved = { ...this.view }
+    // Full framing (no drawer offset) and no drag tether in the picture.
+    this.view = { cx: 0.5, cy: 0.5, zoom: 1 }
+    this.applyFraming()
+    const tether = [this.tether.visible, this.tetherLine.visible]
+    this.tether.visible = this.tetherLine.visible = false
+    this.updateVisuals(1, 0, performance.now() / 1000)
+    this.renderer.shadowMap.needsUpdate = true
+    this.renderer.render(this.scene, this.camera)
+    const blob = new Promise<Blob | null>((resolve) => {
+      try {
+        this.canvas.toBlob((b) => resolve(b), 'image/png')
+      } catch {
+        resolve(null)
+      }
+    })
+    ;[this.tether.visible, this.tetherLine.visible] = tether
+    this.view = saved
+    this.applyFraming()
+    this.audio?.shutter()
+    return blob
+  }
+
   // ---------- Test / debug hooks (exposed on window in dev builds only) ----------
 
   /** Spawn at an exact spot with no spawn grace (for deterministic tests). */
@@ -726,7 +1061,7 @@ export class PhysicsEngine {
       material: kind,
       pos: new THREE.Vector3(x, y, z),
       quat: new THREE.Quaternion().setFromAxisAngle(_up, yaw),
-      color: kind === 'nitro' ? new THREE.Color('#ffffff') : nextSpawnColor(),
+      colorIndex: kind === 'nitro' ? -1 : nextColorIndex(),
       popIn: true,
       grace: 0,
     })
@@ -771,6 +1106,15 @@ export class PhysicsEngine {
         p95: timings[Math.floor(timings.length * 0.95)] ?? 0,
         max: timings[timings.length - 1] ?? 0,
       },
+      frozen: this.frozen,
+      theme: this.theme.id,
+      worldGravity: (({ x, y, z }) => [x, y, z])(this.world.gravity),
+      tremor: this.tremor ? { t: this.tremor.t } : null,
+      tremorWoken: this.tremorWoken,
+      lastTremor: this.lastTremor ? { ...this.lastTremor } : null,
+      instanceColorVersions: Object.fromEntries(
+        FORM_TYPES.map((t) => [t, this.meshes[t].instanceColor?.version ?? 0]),
+      ),
       detonations: [...this.detonationLog],
       impacts: [...this.impactLog],
       pendingDetonations: this.detonations.length,
@@ -799,6 +1143,10 @@ export class PhysicsEngine {
           isSliced: o.isSliced,
           isNitro: o.isNitro,
           armed: o.armed,
+          colorIndex: o.colorIndex,
+          color: '#' + o.color.getHexString(THREE.SRGBColorSpace),
+          dims: o.form.d.toArray(),
+          rot: o.currQuat.toArray(),
         }
       }),
     }
@@ -809,6 +1157,8 @@ export class PhysicsEngine {
     this.disposed = true
     cancelAnimationFrame(this.rafId)
     document.removeEventListener('visibilitychange', this.onVisibility)
+    window.removeEventListener('devicemotion', this.onDeviceMotion)
+    this.audio?.singularity(null)
     this.resizeObserver.disconnect()
     this.canvas.removeEventListener('pointerdown', this.onPointerDown, { capture: true })
     this.canvas.removeEventListener('pointermove', this.onPointerMove, { capture: true })
@@ -846,6 +1196,7 @@ export class PhysicsEngine {
     const floorGeo = new THREE.PlaneGeometry(halfX * 2, halfZ * 2)
     floorGeo.rotateX(-Math.PI / 2)
     const floorMat = createFloorMaterial(halfX, halfZ)
+    this.themed.floor = floorMat
     const floor = new THREE.Mesh(floorGeo, floorMat)
     floor.receiveShadow = true
     this.scene.add(floor)
@@ -853,6 +1204,7 @@ export class PhysicsEngine {
     const outerGeo = new THREE.PlaneGeometry(90, 90)
     outerGeo.rotateX(-Math.PI / 2)
     const outerMat = createOuterGroundMaterial()
+    this.themed.outer = outerMat
     const outer = new THREE.Mesh(outerGeo, outerMat)
     outer.position.y = -0.02
     this.scene.add(outer)
@@ -861,6 +1213,8 @@ export class PhysicsEngine {
     const wallMat = createGlassMaterial({ verticalGradient: true })
     const ceilingMat = createGlassMaterial({ verticalGradient: false })
     ceilingMat.uniforms.uOpacity.value = 0.015
+    this.themed.wall = wallMat
+    this.themed.ceiling = ceilingMat
     const wallXGeo = new THREE.PlaneGeometry(halfZ * 2, height)
     const wallZGeo = new THREE.PlaneGeometry(halfX * 2, height)
     const ceilingGeo = new THREE.PlaneGeometry(halfX * 2, halfZ * 2)
@@ -882,6 +1236,7 @@ export class PhysicsEngine {
     const edgesGeo = new THREE.EdgesGeometry(boxGeo)
     boxGeo.dispose()
     const edgesMat = new THREE.LineBasicMaterial({ color: '#56e3ff', transparent: true, opacity: 0.55 })
+    this.themed.edges = edgesMat
     const edges = new THREE.LineSegments(edgesGeo, edgesMat)
     edges.position.y = height / 2
     this.scene.add(edges)
@@ -916,6 +1271,7 @@ export class PhysicsEngine {
       depthWrite: false,
     })
     this.scene.add(new THREE.Points(geo, mat))
+    this.themed.stars = mat
     this.geometries.push(geo)
     this.materials.push(mat)
   }
@@ -969,6 +1325,7 @@ export class PhysicsEngine {
       .setLinearDamping(spec.linearDamping)
       .setAngularDamping(spec.angularDamping)
       .setCanSleep(true)
+      .setSleeping(!!init.sleeping)
       // Debris are small and slow-ish; skipping CCD keeps big shatters cheap.
       .setCcdEnabled(!isDebris)
     if (init.linvel) bodyDesc.setLinvel(init.linvel.x, init.linvel.y, init.linvel.z)
@@ -1000,7 +1357,10 @@ export class PhysicsEngine {
       body,
       collider,
       mass,
-      color: init.color,
+      color: this.colorFor(init.colorIndex, init.shade ?? 0),
+      colorIndex: init.colorIndex,
+      shade: init.shade ?? 0,
+      chainHop: 0,
       scale: formVisualScale(init.form, new THREE.Vector3()),
       radius: formBoundingRadius(init.form),
       prevPos: pos.clone(),
@@ -1157,6 +1517,8 @@ export class PhysicsEngine {
 
     const toCamera = this.camera.position.clone().sub(parent.pos).normalize()
     this.impactRings.spawn(parent.pos, toCamera, color, 0.9)
+    // Crystalline burst at the moment of fracture (debris have no contact events of their own).
+    this.audio?.shatter(Math.min(1, parentMass))
 
     for (const child of layout) {
       const pos = child.pos.clone().applyQuaternion(parent.quat).add(parent.pos)
@@ -1165,7 +1527,6 @@ export class PhysicsEngine {
       // Rigid-body velocity at the fragment's location: v + ω × r.
       const linvel = parent.linvel.clone().add(new THREE.Vector3().crossVectors(parent.angvel, offset))
       const mass = (parentMass * child.volume) / totalVolume
-      const shade = color.clone().offsetHSL(0, -0.05, (Math.random() - 0.5) * 0.16)
       const frag = this.createBody({
         form: child.form,
         material: 'shard',
@@ -1176,7 +1537,8 @@ export class PhysicsEngine {
           new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(8),
         ),
         mass,
-        color: shade,
+        colorIndex: obj.colorIndex,
+        shade: obj.shade + (Math.random() - 0.5) * 0.16,
         isDebris: true,
       })
       // Modest outward scatter impulse: J = m · Δv along the shard's direction.
@@ -1217,7 +1579,8 @@ export class PhysicsEngine {
         linvel: parent.linvel.clone().add(new THREE.Vector3().crossVectors(parent.angvel, offset)),
         angvel: parent.angvel,
         mass: (parentMass * child.volume) / totalVolume,
-        color: obj.color,
+        colorIndex: obj.colorIndex,
+        shade: obj.shade,
         isSliced: true,
         grace: 0.3,
       })
@@ -1295,6 +1658,7 @@ export class PhysicsEngine {
       s.cut.add(obj.id)
       this.laser.burst(cx - rect.left, cy - rect.top, -sdy / slen, sdx / slen)
       haptics.slice()
+      this.audio?.slice()
       if (obj.isNitro) {
         this.queueDetonation(obj, 0)
         continue
@@ -1312,9 +1676,10 @@ export class PhysicsEngine {
   // Nitro
   // =====================================================================
 
-  private queueDetonation(obj: PhysObject, delaySteps: number): void {
+  private queueDetonation(obj: PhysObject, delaySteps: number, hop = 0): void {
     if (!obj.isNitro || obj.armed || !obj.body) return
     obj.armed = true
+    obj.chainHop = hop
     // Keep blasts at least CHAIN_DELAY_STEPS apart: a cluster rolls off as a wave.
     const due = Math.max(this.stepCount + delaySteps, this.lastScheduledDetonation + CHAIN_DELAY_STEPS)
     this.lastScheduledDetonation = due
@@ -1330,6 +1695,7 @@ export class PhysicsEngine {
     this.despawn(obj, 'instant')
     this.explosions.spawn(centre, BLAST_RADIUS * 0.6)
     haptics.explosion()
+    this.audio?.explosion(obj.chainHop)
 
     const lift = this.gravityY < -0.01 ? 0.35 : this.gravityY > 0.01 ? -0.35 : 0
     for (const other of [...this.alive]) {
@@ -1339,7 +1705,7 @@ export class PhysicsEngine {
       const dist = d.length()
       if (dist > BLAST_RADIUS) continue
       // Shockwave sets off neighbouring Nitro — staggered, never in this frame.
-      if (other.isNitro) this.queueDetonation(other, CHAIN_DELAY_STEPS)
+      if (other.isNitro) this.queueDetonation(other, CHAIN_DELAY_STEPS, obj.chainHop + 1)
       if (other === this.drag?.obj) continue
       const k = Math.pow(1 - dist / BLAST_RADIUS, 1.5)
       const dir =
@@ -1367,6 +1733,7 @@ export class PhysicsEngine {
   // =====================================================================
 
   private notifySingularity(): void {
+    this.audio?.singularity(this.singularity?.type ?? null)
     this.opts.onSingularityChange?.({
       type: this.singularity?.type ?? this.armedSingularity,
       placed: this.singularity !== null,
@@ -1527,7 +1894,8 @@ export class PhysicsEngine {
     this.lastFrameAt = now
     this.trackFps(now)
 
-    this.accumulator += dt
+    // Frozen: no world.step(); the render loop (and camera) keep running.
+    this.accumulator = this.frozen ? 0 : this.accumulator + dt
     let steps = 0
     while (this.accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
       const t0 = performance.now()
@@ -1557,7 +1925,7 @@ export class PhysicsEngine {
     this.laser.update(now, dt)
 
     if (this.needsRender || this.animating || this.hasMotion || this.drag || fx) {
-      this.updateVisuals(this.accumulator / FIXED_DT, dt, time)
+      this.updateVisuals(this.frozen ? 1 : this.accumulator / FIXED_DT, dt, time)
       if (this.shadowDirty) {
         this.renderer.shadowMap.needsUpdate = true
         this.shadowDirty = false
@@ -1581,8 +1949,9 @@ export class PhysicsEngine {
       }
     }
 
-    // 2. Singularity field.
+    // 2. Singularity field and tremor.
     this.applySingularity()
+    this.stepTremor()
 
     // 3. Drive the grabbed body through the physics engine (kinematic target), never the mesh.
     const drag = this.drag
@@ -1617,7 +1986,9 @@ export class PhysicsEngine {
           haptics.rumble()
           this.spawnImpactRing(obj, surface, force / obj.mass)
         }
-        this.noteImpact(obj, impulse, materialRestitution(obj.material, this.restitution))
+        const eArena = materialRestitution(obj.material, this.restitution)
+        this.audio?.collision(impulse / (1 + eArena), obj.mass, obj.material)
+        this.noteImpact(obj, impulse, eArena)
         return
       }
       const a = this.byCollider.get(h1)
@@ -1629,6 +2000,7 @@ export class PhysicsEngine {
         materialRestitution(a.material, this.restitution),
         materialRestitution(b.material, this.restitution),
       )
+      this.audio?.collision(impulse / (1 + e), Math.min(a.mass, b.mass), a.mass < b.mass ? a.material : b.material)
       this.noteImpact(a, impulse, e)
       this.noteImpact(b, impulse, e)
     })
@@ -1744,7 +2116,7 @@ export class PhysicsEngine {
     // So bodies are only forced asleep once *every* awake body has been calm for
     // SLEEP_TIME_LIMIT, which lets a settled scene drop out of the solver quickly.
     if (checkSleep) {
-      if (anyAwake && allCalm && hasGravity && !drag && !field && !this.detonations.length) {
+      if (anyAwake && allCalm && hasGravity && !drag && !field && !this.tremor && !this.detonations.length) {
         this.calmTime += checkDt
         if (this.calmTime >= SLEEP_TIME_LIMIT) {
           for (const obj of this.alive) {
@@ -2066,6 +2438,8 @@ export class PhysicsEngine {
     this.activePointers.add(e.pointerId)
     if (this.drag || this.slice || this.singularityGesture || othersDown) return
     if (e.pointerType === 'mouse' && e.button !== 0) return
+    // Frozen: every touch belongs to the camera.
+    if (this.frozen) return
 
     // Singularity gestures take precedence in every mode: drag/tap its core, or place an armed one.
     if (this.singularity && this.hitsSingularity(e.clientX, e.clientY)) {
@@ -2207,11 +2581,13 @@ export class PhysicsEngine {
   }
 
   private applyModeToControls(): void {
-    const camera = this.mode === 'camera'
+    // Frozen behaves like Camera mode, plus two-finger pan to inspect the paused scene.
+    const camera = this.mode === 'camera' || this.frozen
     // Grab / Slice: one finger is reserved for the tool; two-finger pinch still zooms.
     // Camera: one finger orbits, two-finger pinch zooms.
     this.controls.touches.ONE = camera ? THREE.TOUCH.ROTATE : null
     this.controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+    this.controls.enablePan = this.frozen
     this.controls.mouseButtons.LEFT = camera ? THREE.MOUSE.ROTATE : null
     this.controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE
     this.controls.enabled = !this.drag && !this.slice && !this.singularityGesture

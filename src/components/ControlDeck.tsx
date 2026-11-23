@@ -1,30 +1,37 @@
-import { Bomb, Box, Circle, Cylinder, Hand, Rotate3d, Slice, SlidersHorizontal, type LucideIcon } from 'lucide-react'
+import { Bomb, Box, Circle, Cylinder, Globe, Hand, Orbit, Rotate3d, Slice, Wrench, type LucideIcon } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import type { InteractionMode, ShapeKind } from '../engine/constants'
 import { TapButton } from './TapButton'
+
+export type DrawerTab = 'forces' | 'environment' | 'tools'
 
 interface Props {
   mode: InteractionMode
   onMode: (mode: InteractionMode) => void
   onSpawn: (kind: ShapeKind) => void
   nextColor: string
-  dockOpen: boolean
-  onToggleDock: () => void
-  gravityLabel: string
+  drawer: DrawerTab | null
+  onDrawer: (tab: DrawerTab) => void
 }
+
+const DRAWERS: { id: DrawerTab; label: string; aria: string; Icon: LucideIcon }[] = [
+  { id: 'forces', label: 'Forces', aria: 'Forces drawer', Icon: Orbit },
+  { id: 'environment', label: 'World', aria: 'Environment drawer', Icon: Globe },
+  { id: 'tools', label: 'Tools', aria: 'Tools drawer', Icon: Wrench },
+]
 
 const MODES: { id: InteractionMode; label: string; Icon: LucideIcon; active: string }[] = [
   {
     id: 'interact',
     label: 'Grab',
     Icon: Hand,
-    active: 'bg-neon/18 text-neon shadow-[inset_0_0_0_1px_rgb(56_225_255/0.55),0_0_16px_-4px_rgb(56_225_255/0.7)]',
+    active: 'bg-neon/18 text-neon shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-neon)_55%,transparent),0_0_16px_-4px_color-mix(in_srgb,var(--color-neon)_70%,transparent)]',
   },
   {
     id: 'camera',
     label: 'Camera',
     Icon: Rotate3d,
-    active: 'bg-neon/18 text-neon shadow-[inset_0_0_0_1px_rgb(56_225_255/0.55),0_0_16px_-4px_rgb(56_225_255/0.7)]',
+    active: 'bg-neon/18 text-neon shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-neon)_55%,transparent),0_0_16px_-4px_color-mix(in_srgb,var(--color-neon)_70%,transparent)]',
   },
   {
     id: 'slice',
@@ -46,10 +53,10 @@ const HOLD_INTERVAL_MS = 110
 
 /**
  * Bottom control deck, two thumb-height rows:
- *   1. touch tool (Grab / Camera / Slice) + the Forces dock toggle
+ *   1. touch tool (Grab / Camera / Slice) + the Forces / Environment / Tools drawers
  *   2. quick spawner (Cube / Sphere / Cylinder / Nitro) — tap for one, hold to keep spawning
  */
-export function ControlDeck({ mode, onMode, onSpawn, nextColor, dockOpen, onToggleDock, gravityLabel }: Props) {
+export function ControlDeck({ mode, onMode, onSpawn, nextColor, drawer, onDrawer }: Props) {
   const holdTimer = useRef<number | undefined>(undefined)
   const repeatTimer = useRef<number | undefined>(undefined)
 
@@ -78,7 +85,7 @@ export function ControlDeck({ mode, onMode, onSpawn, nextColor, dockOpen, onTogg
       {/* Two rows on phones; one strip on short landscape screens. */}
       <div className="hud-panel pointer-events-auto flex flex-col gap-1.5 rounded-[20px] p-1.5 [@media(max-height:500px)]:flex-row">
         {/* Row 1: touch tool + forces */}
-        <div className="flex gap-1.5 [@media(max-height:500px)]:flex-1">
+        <div className="flex gap-1 [@media(max-height:500px)]:flex-1">
           <div
             role="radiogroup"
             aria-label="Touch tool"
@@ -92,30 +99,34 @@ export function ControlDeck({ mode, onMode, onSpawn, nextColor, dockOpen, onTogg
                   role="radio"
                   aria-checked={on}
                   onTap={() => onMode(id)}
-                  className={`flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl text-[11px] font-bold tracking-[0.1em] uppercase transition-colors active:scale-95 ${
+                  className={`flex h-10 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-[9.5px] font-bold tracking-[0.06em] uppercase transition-colors active:scale-95 ${
                     on ? active : 'text-ink-dim'
                   }`}
                 >
                   <Icon className="size-4 shrink-0" strokeWidth={on ? 2.3 : 1.9} />
-                  <span className="truncate">{label}</span>
+                  <span className="max-w-full truncate px-0.5">{label}</span>
                 </TapButton>
               )
             })}
           </div>
-          <TapButton
-            onTap={onToggleDock}
-            aria-expanded={dockOpen}
-            aria-controls="forces-dock"
-            aria-label="Forces and environment settings"
-            className={`flex h-12 w-[76px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl border transition-colors active:scale-95 ${
-              dockOpen ? 'border-neon/50 bg-neon/15 text-neon' : 'border-white/5 bg-panel-2/80 text-ink'
-            }`}
-          >
-            <SlidersHorizontal className="size-4" strokeWidth={1.9} />
-            <span className="max-w-full truncate px-1 text-[10px] font-bold tracking-[0.08em] uppercase">
-              {gravityLabel}
-            </span>
-          </TapButton>
+          {DRAWERS.map(({ id, label, aria, Icon }) => {
+            const open = drawer === id
+            return (
+              <TapButton
+                key={id}
+                onTap={() => onDrawer(id)}
+                aria-expanded={open}
+                aria-controls="settings-drawer"
+                aria-label={aria}
+                className={`flex h-12 w-11 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl border transition-colors active:scale-95 ${
+                  open ? 'border-neon/50 bg-neon/15 text-neon' : 'border-white/5 bg-panel-2/80 text-ink'
+                }`}
+              >
+                <Icon className="size-4" strokeWidth={1.9} />
+                <span className="max-w-full truncate text-[9px] font-bold tracking-[0.04em] uppercase">{label}</span>
+              </TapButton>
+            )
+          })}
         </div>
 
         {/* Row 2: quick spawner */}

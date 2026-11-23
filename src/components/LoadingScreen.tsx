@@ -50,7 +50,7 @@ export function LoadingScreen({ visible, error, onRetry }: Props) {
           <div className="relative size-20">
             <div className="animate-spin-slow absolute inset-0 rounded-full border-2 border-transparent border-t-neon border-r-neon/40" />
             <div className="animate-spin-rev absolute inset-3 rounded-full border-2 border-transparent border-b-plasma border-l-plasma/40" />
-            <div className="absolute inset-[34px] rounded-full bg-neon shadow-[0_0_16px_4px_rgb(56_225_255/0.6)]" />
+            <div className="absolute inset-[34px] rounded-full bg-neon shadow-[0_0_16px_4px_color-mix(in_srgb,var(--color-neon)_60%,transparent)]" />
           </div>
           <p className="mt-7 text-sm font-semibold tracking-[0.28em] text-ink uppercase">Initializing</p>
           <p className="mt-1.5 font-mono text-[11px] tracking-wider text-ink-dim">physics core · rapier wasm</p>

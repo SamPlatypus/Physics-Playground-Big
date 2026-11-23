@@ -2,6 +2,8 @@
 
 A mobile-first, offline-ready 3D rigid-body sandbox tuned for Android phones. Spawn cubes, spheres, cylinders and Nitro blocks into a glass arena. Grab and fling them, slice them with a laser, shatter them, drop a black hole into the middle, or set off a chain reaction. Gravity switches between Earth, Moon, Mars, zero-G and inverted.
 
+You can also shake the phone (or press Tremor) for an earthquake, freeze time and orbit around the moment, save a scene and reload it later, and take a snapshot. Every sound is synthesised live, and four colour themes restyle the whole arena.
+
 **Stack:** React 19 · Tailwind CSS 4 · Lucide icons · Three.js · [Rapier](https://rapier.rs) (`@dimforge/rapier3d-compat`, WASM) · Vite + `vite-plugin-pwa`
 
 ```bash
@@ -18,18 +20,24 @@ To try it on an Android phone, open the dev server's network URL in Chrome. For 
 | Area | What it does |
 | --- | --- |
 | **Boot** | `await RAPIER.init()` runs behind a loading spinner, and the simulation only mounts once the WASM runtime and the 3D bundle are both ready. A WebGL check and a retry path cover failures. |
-| **Arena** | 8 × 8 × 8 m glass box: lit floor with an anti-aliased glowing grid, fresnel glass walls and ceiling (the ceiling contains inverted gravity), a neon edge frame, and one shadow-casting directional light. |
-| **HUD** | Live FPS (colour-coded), `bodies / 150` with a fill bar, a debris count, and a recycle icon at the cap. An instant **Clear** button flashes a confirmation sweep. |
-| **Control deck** | Two thumb-height rows at the bottom. The top row picks the touch tool (**Grab · Camera · Slice**) and opens **Forces**. The bottom row is the spawner (**Cube · Sphere · Cylinder · Nitro**): tap for one, hold to keep spawning. It fits a 360 px screen without overlap, and collapses to a single strip on short landscape screens. |
+| **Arena** | 8 × 8 × 8 m glass box: lit floor with an anti-aliased glowing grid, fresnel glass walls and ceiling (the ceiling contains inverted gravity), a glowing edge frame, and one shadow-casting directional light. |
+| **HUD** | One row that never wraps, even at 360 px or on a short landscape screen. On the left, a compact `FPS • count/150` badge, plus a debris count and a recycle icon at the cap. On the right, 32 px **Mute**, **Freeze** and **Clear** buttons, each with a 44 px touch area. |
+| **Control deck** | Two thumb-height rows at the bottom. The top row picks the touch tool (**Grab · Camera · Slice**) and opens the **Forces**, **World** (Environment) and **Tools** drawers. The bottom row is the spawner (**Cube · Sphere · Cylinder · Nitro**): tap for one, hold to keep spawning. It fits a 360 px screen without overlap, and collapses to a single strip on short landscape screens. |
 | **Touch tools** | *Grab*: one finger grabs, drags and flings bodies. *Camera*: one finger orbits. *Slice*: one finger draws a laser. Two-finger pinch zooms in every tool. |
-| **Shattering** | A hard enough impact (a ~6 m drop, a hard throw, or a nearby blast) shatters a shape into 4–6 faceted debris shards. Toggle it with **Destructible** in the Forces dock. |
+| **Shattering** | A hard enough impact (a ~6 m drop, a hard throw, or a nearby blast) shatters a shape into 4–6 faceted debris shards. Toggle it with **Destructible** in the Forces drawer. |
 | **Laser slicing** | Swipe in Slice mode to cut every shape the beam crosses: cubes become two prisms, spheres two hemispheres, and cylinders two shorter cylinders or two half-cylinders. The beam leaves a glowing trail and sparks. |
-| **Singularities** | Pick **Black hole** or **Repulsor** in the Forces dock, then tap the arena to place it. Drag its core to move it; tap the core to dismiss it. Only one can exist at a time. |
+| **Singularities** | Pick **Black hole** or **Repulsor** in the Forces drawer, then tap the arena to place it. Drag its core to move it; tap the core to dismiss it. Only one can exist at a time. |
 | **Nitro** | Hazard-striped blocks with a pulsing reactor core. They detonate on a hard impact, a laser cut, or another blast's shockwave. Neighbours go off as a rolling chain reaction. |
-| **Forces dock** | Slide-up drawer with: gravity presets (−9.81, −1.62, −3.71, 0, +9.81 m/s²); the singularity picker; Destructible and Haptics toggles; restitution (dead thud → superball) and friction (ice glide → high grip) sliders. Changes apply live. While the drawer is open, the 3D view slides and zooms into the area left visible, and picking still lines up. |
-| **Haptics** | `navigator.vibrate`: 10 ms spawn tick; 15 ms grab and slice taps; 30 ms fling; 20 ms collision rumble (at most once every 120 ms); `[40, 30, 80]` per explosion (at most once every 200 ms). It no-ops where unsupported and can be toggled in the dock. |
+| **Drawers** | One slide-up sheet with three tabs:<br>• *Forces*: gravity presets (−9.81, −1.62, −3.71, 0, +9.81 m/s²), the singularity picker, **Tremor** and **Destructible**.<br>• *Environment*: the four colour themes, plus restitution (dead thud → superball) and friction (ice glide → high grip) sliders.<br>• *Tools*: **Snapshot**, three save slots, Haptics and Reset view.<br>Changes apply live. While the sheet is open, the 3D view slides and zooms into the area left visible, and picking still lines up. |
+| **Sound** | Procedural Web Audio, with no sample files:<br>• collisions: pentatonic tones, where heavy hits are low thuds and light hits are crisp ticks<br>• shatter: a crystalline burst<br>• slice: a whoosh plus a knife hiss<br>• Nitro: a sub-bass boom that rises in pitch along a chain<br>• singularities: a black-hole rumble and a pulsing repulsor hum<br>• tremor: an escalating rumble<br>• a shutter click for snapshots<br>The Mute state is remembered. |
+| **Tremor** | Shake the phone hard (more than 18 m/s² of linear acceleration) or press **Tremor**. Every body is woken, then horizontal gravity oscillates (`g_x = sin(2π·3.4·t)·6 m/s²`) for 1.2 s with small vertical bounces and a settling decay. It comes with a rumble and a `[40,60,40,80,50]` vibration pattern. |
+| **Themes** | **Industrial** (default): charcoal, hazard yellow, safety orange, concrete. **Neon Synth**: dark violet, hot pink, cyan, lime. **Pastel Clay**: terracotta, sage, peach, sky blue. **Blueprint**: navy, white grid, wireframe shades. A theme retints the arena, lights and UI accent, and recolours every live body. |
+| **Freeze** | Stops `world.step()` while rendering continues: orbit, pinch and two-finger pan around the paused moment. Sounds and the singularity drone cut out immediately. |
+| **Save / load** | Three `localStorage` slots. Debris is never saved; sliced halves keep their cut shape. A loaded scene comes back frozen with zero velocity, and bodies that were at rest come back asleep. |
+| **Snapshot** | Renders a clean full-frame image, encodes it as PNG, and opens a preview with **Download** (and **Share** where the browser supports sharing files). |
+| **Haptics** | `navigator.vibrate`: 10 ms spawn tick; 15 ms grab and slice taps; 30 ms fling; 20 ms collision rumble (at most once every 120 ms); `[40, 30, 80]` per explosion (at most once every 200 ms); the tremor pattern. It no-ops where unsupported and can be toggled in Tools. |
 | **Offline** | A Workbox service worker precaches everything (about 5 MB, mostly Rapier's inlined WASM). Updates prompt instead of auto-reloading, so a running simulation is never wiped. |
-| **Persistence** | Gravity, sliders, touch tool, and the Destructible and Haptics toggles are remembered in `localStorage`. If storage is unavailable the app still works, with in-memory settings. |
+| **Persistence** | Gravity, sliders, touch tool, theme, Mute, and the Destructible and Haptics toggles are remembered in `localStorage`, alongside the save slots. If storage is unavailable the app still works, with in-memory settings. |
 
 ## How the key safeguards work
 
@@ -79,6 +87,36 @@ All physics and rendering live in `src/engine/PhysicsEngine.ts`, outside React. 
   - Each blast's fireball, smoke and flash are cleared after 500 ms.
 - **Taps that can't be swallowed.** HUD and dock buttons act on a clean pointer tap rather than waiting for the browser's synthesized `click`. In testing, Chrome sometimes dropped that click when a tap landed about 200 ms after a fast swipe on the arena. `click` still works for keyboards and screen readers, de-duplicated so nothing fires twice.
 
+## Phase 3A: sound, tremors, themes, freeze and saves
+
+- **Audio graph and its lifecycle.**
+  - The `AudioContext` is created on the first touch or key press and resumed whenever it is found suspended.
+  - Each voice has its own gain node. Voices and the singularity drone feed a master gain, then a `DynamicsCompressor` (so a big collapse can't clip), then the output.
+  - At most 8 transient voices play at once. A ninth steals the least-recently-started voice with a 10 ms fade.
+  - Every oscillator and noise source binds `onended = () => node.disconnect()`. Each voice's own filters and gains are detached when its last source ends.
+  - The tests assert that every node created is also disconnected after a flood of sounds.
+  - Collision, slice and shatter sounds are rate-limited so a pile-up doesn't machine-gun voices.
+- **Collision mapping.**
+  - The contact impulse divided by (1 + restitution) gives m·v, which sets volume and brightness.
+  - Mass picks the octave, and notes come from a major pentatonic scale, so a collapsing pile sounds musical.
+- **Stub audio.** Where Web Audio is missing, the manager runs as a stub: it records events without playing them. The suite runs once with `AudioContext` deleted to prove the app still works.
+- **Tremor safety.**
+  - Rapier doesn't wake sleeping bodies when `world.gravity` changes, so a tremor calls `body.wakeUp()` on every body first.
+  - It keeps re-waking them every 6 steps while shaking.
+  - The scene-wide calm sleep is suspended until the quake ends, and gravity is then restored exactly.
+- **Themes and instancing.**
+  - Bodies store a palette index, not a colour. Switching theme re-derives each colour and marks every bucket dirty.
+  - The next frame writes `mesh.setColorAt()` for each instance and sets `instanceColor.needsUpdate = true`.
+  - Shader uniforms (grid, glass, glow) are shared objects, so they retint without recompiling.
+  - The UI accent is a CSS variable switched on `<html data-theme>`, so Tailwind's `neon` colours follow the theme.
+- **Freeze.**
+  - The fixed-step accumulator stays at zero, so `world.step()` never runs. Rendering, effects and OrbitControls continue.
+  - Grab, slice and singularity gestures are suspended while frozen, since they need the solver. One finger orbits and two fingers pinch or pan.
+- **Save payload.** Each body is stored as `{ type, dimensions, scale, isSliced, position, rotation, colorIndex, material, mass, sleeping }`.
+  - `dimensions` holds the form's own size, so a cut prism stays a prism.
+  - Loading validates each record, rebuilds bodies through the normal body-creation path, and freezes the simulation.
+- **Photo capture.** The engine clears any drawer framing and hides the drag tether. It calls `renderer.render()` immediately before `canvas.toBlob()` in the same task, so the drawing buffer is guaranteed to hold that frame, then restores the view.
+
 Physics character per shape lives in `src/engine/constants.ts`:
 
 - **Cube:** heaviest and most damped, so it settles and stacks well.
@@ -117,11 +155,14 @@ src/
     breakage.ts           pure geometry: fracture layouts and slice bisection
     effects.ts            pooled impact rings, explosions, laser overlay, singularity visuals
     nitro.ts              canvas-drawn hazard texture + pulsing emissive core
+    audio.ts              procedural Web Audio: voices, LRU polyphony, compressor, drones, stub mode
+    themes.ts             the four colour themes and the spawn colour cycle
     constants.ts          arena, caps, thresholds and tuning for every system
     materials.ts          shader patches: neon shapes, grid floor, fresnel glass
     haptics.ts            navigator.vibrate wrapper: ticks, rate-limited rumble, throttled blasts
     palette.ts            golden-angle neon colour assignment
-  components/             Hud, ControlDeck, ForcesDock, TapButton, LoadingScreen, PwaPrompt
+  components/             Hud, ControlDeck, SettingsDrawer (Forces / Environment / Tools), PhotoModal,
+                          TapButton, LoadingScreen, PwaPrompt
 scripts/
   touch-test.cjs          end-to-end Android touch test (Playwright)
   generate-icons.mjs      renders public/favicon.svg into the PWA PNG icons
@@ -131,7 +172,7 @@ scripts/
 
 `npm run test:touch` drives the dev server in an emulated Pixel 7 using real touch events over the Chrome DevTools Protocol. Start `npm run dev` first. It needs Playwright with Chromium available to Node (`npm i -D playwright && npx playwright install chromium` if you don't have it).
 
-The script checks 68 behaviours.
+The script checks 107 behaviours.
 
 **Phase 1**
 
@@ -178,6 +219,16 @@ The script checks 68 behaviours.
 - blast visuals are cleared after 500 ms
 - the physics step stays within budget
 - a 5-block chain through a crowd of 40 breakables stays under the cap, finite, and under one 60 fps frame per step
+
+**Phase 3A**
+
+- **Audio:** the context starts on first touch with a compressor; a dropped cube produces voiced pentatonic tones; heavy hits are lower than light ones; at most 8 voices with LRU stealing; every node created is disconnected; Mute silences sound and persists, and Unmute restores it; the stub mode works without Web Audio.
+- **Tremor:** the button wakes every body (counted via a patched `wakeUp`); `g_x` oscillates up to 6 m/s²; the quake settles in 1.2 s with gravity restored; the haptic pattern fires; the rumble plays; a 24 m/s² `devicemotion` shake also triggers it.
+- **Palettes:** a theme switch bumps `instanceColor` versions and recolours bodies to the new palette; the UI accent follows; the frame still renders; the choice persists.
+- **Freeze:** voices and the drone go silent; the step count stays constant while frames keep rendering; a swipe orbits the camera without grabbing; unfreezing resumes stepping and the drone.
+- **Save / load:** debris is excluded; all payload keys are present; sliced halves keep their cut dimensions; the slot list updates; loading restores identical shapes and positions, frozen with zero velocity, and stays stable after unfreezing.
+- **Photo:** a PNG with a valid signature, at full canvas resolution, with pixel variance (not blank or black); the preview offers a download and closes.
+- **HUD:** one row with three 32 px buttons, no clipping and no page overflow at 360×740 and 740×360, in the worst case (150/150 with debris and the recycle icon showing).
 
 Strokes that must be fast carry explicit event timestamps. Headless SwiftShader can stall a DevTools touch call for a whole slow frame, which would otherwise make a flick look like "move, pause, lift".
 

@@ -134,6 +134,22 @@ export const SINGULARITY = {
 } as const
 
 // ---------------------------------------------------------------------------
+// Tremor (earthquake)
+// ---------------------------------------------------------------------------
+
+export const TREMOR = {
+  duration: 1.2, // s of shaking, envelope included
+  frequency: 3.4, // Hz of the horizontal gravity oscillation
+  amplitude: 6.0, // m/s²: g_x = sin(2πft) · 6
+  attack: 0.12, // s
+  release: 0.45, // s of settling decay at the end
+  bounces: 4, // small vertical kicks spread over the quake
+  bounceSpeed: 1.1, // m/s
+  shakeThreshold: 18, // m/s² linear acceleration that counts as a shake
+  shakeCooldownMs: 2000,
+} as const
+
+// ---------------------------------------------------------------------------
 // Gravity presets
 // ---------------------------------------------------------------------------
 

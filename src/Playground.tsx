@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { PhysicsEngine, type EngineStats, type RapierApi, type SingularityState } from './engine/PhysicsEngine'
+import {
+  PhysicsEngine,
+  type EngineStats,
+  type RapierApi,
+  type SavedScene,
+  type SingularityState,
+} from './engine/PhysicsEngine'
 import {
   GRAVITY_PRESETS,
   MAX_BODIES,
@@ -9,12 +15,14 @@ import {
   type ShapeKind,
   type SingularityType,
 } from './engine/constants'
+import { AudioManager } from './engine/audio'
 import { haptics } from './engine/haptics'
-import { peekNextColorCss } from './engine/palette'
+import { DEFAULT_THEME, THEMES, isThemeId, peekColorIndex, type ThemeId } from './engine/themes'
 import { usePersistentState } from './hooks/usePersistentState'
 import { Hud } from './components/Hud'
-import { ControlDeck } from './components/ControlDeck'
-import { ForcesDock } from './components/ForcesDock'
+import { ControlDeck, type DrawerTab } from './components/ControlDeck'
+import { SettingsDrawer, type SlotMeta } from './components/SettingsDrawer'
+import { PhotoModal } from './components/PhotoModal'
 
 export interface PlaygroundProps {
   rapier: RapierApi
@@ -42,10 +50,26 @@ const SINGULARITY_NAMES: Record<SingularityType, string> = {
   repulsor: 'repulsor',
 }
 
+const SLOT_COUNT = 3
+const slotKey = (slot: number) => `pp.scene.${slot}`
+
+function readSlots(): (SlotMeta | null)[] {
+  return Array.from({ length: SLOT_COUNT }, (_, i) => {
+    try {
+      const raw = localStorage.getItem(slotKey(i + 1))
+      if (!raw) return null
+      const scene = JSON.parse(raw) as SavedScene
+      return { slot: i + 1, count: scene.bodies.length, savedAt: scene.savedAt }
+    } catch {
+      return null
+    }
+  })
+}
+
 export default function Playground({ rapier }: PlaygroundProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
-  const dockRef = useRef<HTMLElement>(null)
+  const drawerRef = useRef<HTMLElement>(null)
   const engineRef = useRef<PhysicsEngine | null>(null)
 
   const [gravity, setGravity] = usePersistentState<GravityId>('pp.gravity', 'earth', isGravityId)
@@ -55,17 +79,26 @@ export default function Playground({ rapier }: PlaygroundProps) {
   const [hapticsOn, setHapticsOn] = usePersistentState('pp.haptics', true, isBool)
   const [hasGrabbed, setHasGrabbed] = usePersistentState('pp.hasGrabbed', false, isBool)
   const [destructible, setDestructible] = usePersistentState('pp.destructible', true, isBool)
+  const [theme, setTheme] = usePersistentState<ThemeId>('pp.theme', DEFAULT_THEME, isThemeId)
+  const [muted, setMuted] = usePersistentState('pp.muted', false, isBool)
+
+  // One audio manager for the app's lifetime; the AudioContext itself is created on first touch.
+  const [audio] = useState(() => new AudioManager(muted))
 
   const [stats, setStats] = useState<EngineStats>({ fps: 0, bodies: 0, debris: 0, max: MAX_BODIES })
   const [singularity, setSingularity] = useState<SingularityState>({ type: null, placed: false })
-  const [dockOpen, setDockOpen] = useState(false)
-  const [nextColor, setNextColor] = useState(peekNextColorCss)
+  const [drawer, setDrawer] = useState<DrawerTab | null>(null)
+  const [frozen, setFrozen] = useState(false)
+  const [tremorActive, setTremorActive] = useState(false)
+  const [slots, setSlots] = useState(readSlots)
+  const [photo, setPhoto] = useState<Blob | null>(null)
+  const [, setColorTick] = useState(0)
   const [flashKey, setFlashKey] = useState(0)
   const [toast, setToast] = useState<{ key: number; text: string } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   // Latest settings, read once when the engine boots (later changes go through setters).
-  const initial = useRef({ gravity, restitution, friction, mode, destructible })
+  const initial = useRef({ gravity, restitution, friction, mode, destructible, theme })
 
   useEffect(() => {
     const host = hostRef.current
@@ -77,6 +110,8 @@ export default function Playground({ rapier }: PlaygroundProps) {
       friction: s.friction,
       mode: s.mode,
       destructible: s.destructible,
+      theme: s.theme,
+      audio,
       onStats: (next) =>
         setStats((prev) =>
           prev.fps === next.fps && prev.bodies === next.bodies && prev.debris === next.debris && prev.max === next.max
@@ -84,18 +119,35 @@ export default function Playground({ rapier }: PlaygroundProps) {
             : next,
         ),
       onSingularityChange: setSingularity,
+      onFrozenChange: setFrozen,
+      onTremorChange: setTremorActive,
       onDragChange: (d) => {
         setDragging(d)
         if (d) setHasGrabbed(true)
       },
     })
     engineRef.current = engine
-    if (import.meta.env.DEV) (window as unknown as { __playground?: PhysicsEngine }).__playground = engine
+    if (import.meta.env.DEV) {
+      const w = window as unknown as { __playground?: PhysicsEngine; __audio?: AudioManager }
+      w.__playground = engine
+      w.__audio = audio
+    }
     return () => {
       engine.dispose()
       engineRef.current = null
     }
-  }, [rapier, setHasGrabbed])
+  }, [rapier, audio, setHasGrabbed])
+
+  // Web Audio may only start after a user gesture: unlock (or resume) on touches and keys.
+  useEffect(() => {
+    const unlock = () => audio.unlock()
+    window.addEventListener('pointerdown', unlock, true)
+    window.addEventListener('keydown', unlock, true)
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true)
+      window.removeEventListener('keydown', unlock, true)
+    }
+  }, [audio])
 
   // Real-time environment updates.
   useEffect(() => {
@@ -113,35 +165,43 @@ export default function Playground({ rapier }: PlaygroundProps) {
   useEffect(() => {
     haptics.setEnabled(hapticsOn)
   }, [hapticsOn])
+  useEffect(() => {
+    audio.setMuted(muted)
+  }, [audio, muted])
+  useEffect(() => {
+    engineRef.current?.setTheme(theme)
+    document.documentElement.dataset.theme = theme
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEMES[theme].background)
+  }, [theme])
 
-  // While the dock is open, slide/zoom the arena into the area it leaves uncovered:
+  // While a drawer is open, slide/zoom the arena into the area it leaves uncovered:
   // the strip above it on phones, or the space beside it on wide/landscape screens.
   useEffect(() => {
     const engine = engineRef.current
-    const dock = dockRef.current
+    const sheet = drawerRef.current
     const root = rootRef.current
     if (!engine) return
-    if (!dockOpen || !dock || !root) {
+    if (!drawer || !sheet || !root) {
       engine.setFocusRect(null)
       return
     }
     const update = () => {
       const width = root.clientWidth
-      const top = (root.querySelector('header')?.getBoundingClientRect().bottom ?? 80) + 6
-      const sideDock = dock.offsetLeft > width * 0.3
+      const top = (root.querySelector('header')?.getBoundingClientRect().bottom ?? 70) + 6
+      const side = sheet.offsetLeft > width * 0.3
       const toolbarTop = root.querySelector('nav')?.getBoundingClientRect().top ?? root.clientHeight
       engine.setFocusRect(
-        sideDock
-          ? { left: 0, top, right: dock.offsetLeft - 6, bottom: toolbarTop - 6 }
-          : { left: 0, top, right: width, bottom: dock.offsetTop - 6 },
+        side
+          ? { left: 0, top, right: sheet.offsetLeft - 6, bottom: toolbarTop - 6 }
+          : { left: 0, top, right: width, bottom: sheet.offsetTop - 6 },
       )
     }
     update()
     const ro = new ResizeObserver(update)
-    ro.observe(dock)
+    ro.observe(sheet)
     ro.observe(root)
     return () => ro.disconnect()
-  }, [dockOpen])
+  }, [drawer])
 
   useEffect(() => {
     if (!toast) return
@@ -153,7 +213,7 @@ export default function Playground({ rapier }: PlaygroundProps) {
 
   const spawn = useCallback((kind: ShapeKind) => {
     engineRef.current?.spawn(kind)
-    setNextColor(peekNextColorCss())
+    setColorTick((n) => n + 1) // refresh the next-colour preview on the spawn buttons
   }, [])
 
   const clearAll = useCallback(() => {
@@ -161,6 +221,15 @@ export default function Playground({ rapier }: PlaygroundProps) {
     haptics.tick()
     setFlashKey((k) => k + 1)
   }, [])
+
+  const toggleFreeze = useCallback(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    const next = !engine.isFrozen
+    engine.setFrozen(next)
+    haptics.tick()
+    showToast(next ? 'Frozen · orbit, pinch and pan around the moment' : 'Physics resumed')
+  }, [showToast])
 
   const changeMode = useCallback(
     (next: InteractionMode) => {
@@ -175,7 +244,7 @@ export default function Playground({ rapier }: PlaygroundProps) {
       engineRef.current?.setSingularity(type)
       // Arming a new one: get the drawer out of the way so the arena can be tapped.
       if (type && !singularity.placed) {
-        setDockOpen(false)
+        setDrawer(null)
         showToast(`Tap the arena to place the ${SINGULARITY_NAMES[type]}`)
       }
     },
@@ -190,25 +259,100 @@ export default function Playground({ rapier }: PlaygroundProps) {
     [setGravity],
   )
 
-  const preset = GRAVITY_PRESETS.find((p) => p.id === gravity) ?? GRAVITY_PRESETS[0]
+  const tremor = useCallback(() => {
+    if (engineRef.current?.triggerTremor()) showToast('Earthquake!')
+  }, [showToast])
+
+  const saveSlot = useCallback(
+    (slot: number) => {
+      const engine = engineRef.current
+      if (!engine) return
+      const scene = engine.serializeScene()
+      try {
+        localStorage.setItem(slotKey(slot), JSON.stringify(scene))
+        showToast(`Saved ${scene.bodies.length} shapes to slot ${slot}`)
+      } catch {
+        showToast('Could not save: storage is unavailable or full')
+      }
+      setSlots(readSlots())
+      haptics.tick()
+    },
+    [showToast],
+  )
+
+  const loadSlot = useCallback(
+    (slot: number) => {
+      const engine = engineRef.current
+      if (!engine) return
+      try {
+        const raw = localStorage.getItem(slotKey(slot))
+        if (!raw) return
+        const n = engine.loadScene(JSON.parse(raw) as SavedScene)
+        setDrawer(null)
+        showToast(`Restored ${n} shapes · frozen — tap ❄ to resume`)
+      } catch {
+        showToast('That save could not be read')
+      }
+      haptics.tick()
+    },
+    [showToast],
+  )
+
+  const takePhoto = useCallback(async () => {
+    const engine = engineRef.current
+    if (!engine) return
+    const blob = await engine.capturePhoto()
+    if (blob && blob.size > 0) setPhoto(blob)
+    else showToast('Snapshot failed on this device')
+  }, [showToast])
+
+  const toggleDrawer = useCallback((tab: DrawerTab) => setDrawer((cur) => (cur === tab ? null : tab)), [])
+
+  const nextColor = THEMES[theme].shapes[peekColorIndex()]
 
   let hint: string | null = null
   if (singularity.type && !singularity.placed) hint = `Tap inside the arena to place the ${SINGULARITY_NAMES[singularity.type]}`
   else if (stats.bodies === 0) hint = 'Tap a shape below to spawn it'
-  else if (!hasGrabbed && mode === 'interact' && !dockOpen) hint = 'Touch & drag a shape — let go to fling'
+  else if (!hasGrabbed && mode === 'interact' && !drawer && !frozen) hint = 'Touch & drag a shape — let go to fling'
 
   return (
     <div ref={rootRef} className="absolute inset-0">
       <div ref={hostRef} className="absolute inset-0" />
 
+      {frozen && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-[5] bg-[radial-gradient(ellipse_at_center,transparent_55%,rgb(159_232_255/0.16))] shadow-[inset_0_0_0_2px_rgb(159_232_255/0.25)]"
+        />
+      )}
+
       {flashKey > 0 && (
         <div key={flashKey} className="pointer-events-none absolute inset-0 z-10" aria-hidden>
-          <div className="animate-clear-flash absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgb(56_225_255/0.28),transparent_70%)]" />
-          <div className="animate-clear-sweep absolute inset-x-0 top-0 h-[3px] bg-neon shadow-[0_0_24px_6px_rgb(56_225_255/0.55)]" />
+          <div className="animate-clear-flash absolute inset-0 bg-[radial-gradient(ellipse_at_center,color-mix(in_srgb,var(--color-neon)_28%,transparent),transparent_70%)]" />
+          <div className="animate-clear-sweep absolute inset-x-0 top-0 h-[3px] bg-neon shadow-[0_0_24px_6px_color-mix(in_srgb,var(--color-neon)_55%,transparent)]" />
         </div>
       )}
 
-      <Hud fps={stats.fps} bodies={stats.bodies} debris={stats.debris} max={stats.max} onClear={clearAll} />
+      <Hud
+        fps={stats.fps}
+        bodies={stats.bodies}
+        debris={stats.debris}
+        max={stats.max}
+        muted={muted}
+        onMute={() => setMuted((m) => !m)}
+        frozen={frozen}
+        onFreeze={toggleFreeze}
+        onClear={clearAll}
+      />
+
+      {frozen && (
+        <div
+          className="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 rounded-full border border-[#9fe8ff]/40 bg-panel/85 px-3 py-1 text-[10px] font-bold tracking-[0.18em] whitespace-nowrap text-[#c8f3ff] uppercase"
+          style={{ top: 'calc(max(env(safe-area-inset-top), 10px) + 56px)' }}
+        >
+          Frozen · drag to orbit
+        </div>
+      )}
 
       {hint && !dragging && (
         <div
@@ -223,33 +367,43 @@ export default function Playground({ rapier }: PlaygroundProps) {
         <div
           key={toast.key}
           role="status"
-          className="hud-panel animate-toast pointer-events-none absolute left-1/2 z-20 rounded-xl px-4 py-2.5 text-xs font-semibold tracking-[0.08em] whitespace-nowrap text-ink"
-          style={{ top: 'calc(max(env(safe-area-inset-top), 10px) + 70px)' }}
+          className="hud-panel animate-toast pointer-events-none absolute left-1/2 z-20 max-w-[calc(100vw-32px)] truncate rounded-xl px-4 py-2.5 text-xs font-semibold tracking-[0.08em] whitespace-nowrap text-ink"
+          style={{ top: 'calc(max(env(safe-area-inset-top), 10px) + 84px)' }}
         >
           {toast.text}
         </div>
       )}
 
-      <ForcesDock
-        open={dockOpen}
-        onClose={() => setDockOpen(false)}
+      <SettingsDrawer
+        tab={drawer}
+        onTab={setDrawer}
+        onClose={() => setDrawer(null)}
+        bottom={TOOLBAR_OFFSET}
+        sectionRef={drawerRef}
         gravity={gravity}
         onGravity={changeGravity}
-        restitution={restitution}
-        onRestitution={setRestitution}
-        friction={friction}
-        onFriction={setFriction}
-        hapticsOn={hapticsOn}
-        hapticsSupported={haptics.supported}
-        onHaptics={setHapticsOn}
-        onResetCamera={() => engineRef.current?.resetCamera()}
         singularity={singularity.type}
         singularityPlaced={singularity.placed}
         onSingularity={chooseSingularity}
         destructible={destructible}
         onDestructible={setDestructible}
-        bottom={TOOLBAR_OFFSET}
-        sectionRef={dockRef}
+        onTremor={tremor}
+        tremorActive={tremorActive}
+        frozen={frozen}
+        theme={theme}
+        onTheme={setTheme}
+        restitution={restitution}
+        onRestitution={setRestitution}
+        friction={friction}
+        onFriction={setFriction}
+        slots={slots}
+        onSave={saveSlot}
+        onLoad={loadSlot}
+        onPhoto={() => void takePhoto()}
+        hapticsOn={hapticsOn}
+        hapticsSupported={haptics.supported}
+        onHaptics={setHapticsOn}
+        onResetCamera={() => engineRef.current?.resetCamera()}
       />
 
       <ControlDeck
@@ -257,10 +411,11 @@ export default function Playground({ rapier }: PlaygroundProps) {
         onMode={changeMode}
         onSpawn={spawn}
         nextColor={nextColor}
-        dockOpen={dockOpen}
-        onToggleDock={() => setDockOpen((o) => !o)}
-        gravityLabel={preset.label}
+        drawer={drawer}
+        onDrawer={toggleDrawer}
       />
+
+      {photo && <PhotoModal blob={photo} onClose={() => setPhoto(null)} />}
     </div>
   )
 }

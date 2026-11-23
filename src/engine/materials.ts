@@ -12,9 +12,11 @@ export function createShapeMaterial(): THREE.MeshStandardMaterial {
     roughness: 0.36,
     metalness: 0.12,
   })
+  // Uniform objects are shared with the compiled shader, so themes can retune them live.
+  const uniforms = { uGlow: { value: 0.16 }, uRim: { value: 0.55 } }
+  material.userData.uniforms = uniforms
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uGlow = { value: 0.16 }
-    shader.uniforms.uRim = { value: 0.55 }
+    Object.assign(shader.uniforms, uniforms)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uGlow;\nuniform float uRim;')
       .replace(
@@ -43,9 +45,14 @@ export function createFloorMaterial(halfX: number, halfZ: number): THREE.MeshSta
     roughness: 0.92,
     metalness: 0.0,
   })
+  const uniforms = {
+    uHalf: { value: new THREE.Vector2(halfX, halfZ) },
+    uLine: { value: new THREE.Color('#38e1ff') },
+    uLineStrength: { value: 1 },
+  }
+  material.userData.uniforms = uniforms
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uHalf = { value: new THREE.Vector2(halfX, halfZ) }
-    shader.uniforms.uLine = { value: new THREE.Color('#38e1ff') }
+    Object.assign(shader.uniforms, uniforms)
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vGridPos;')
       .replace(
@@ -59,6 +66,7 @@ export function createFloorMaterial(halfX: number, halfZ: number): THREE.MeshSta
         varying vec2 vGridPos;
         uniform vec2 uHalf;
         uniform vec3 uLine;
+        uniform float uLineStrength;
         ${GRID_GLSL}`,
       )
       .replace(
@@ -76,18 +84,20 @@ export function createFloorMaterial(halfX: number, halfZ: number): THREE.MeshSta
         vec2 edgeDist = uHalf - abs(vGridPos);
         float border = 1.0 - smoothstep(0.0, 0.18, min(edgeDist.x, edgeDist.y));
         float centre = 1.0 - smoothstep(0.0, 0.05, abs(length(vGridPos) - 1.2));
-        totalEmissiveRadiance += uLine * (minor * 0.11 + major * 0.08 + border * 0.9 + centre * 0.12);`,
+        totalEmissiveRadiance += uLine * uLineStrength * (minor * 0.11 + major * 0.08 + border * 0.9 + centre * 0.12);`,
       )
   }
-  material.customProgramCacheKey = () => 'arena-floor-v1'
+  material.customProgramCacheKey = () => 'arena-floor-v2'
   return material
 }
 
 /** Unlit outer ground that fades into the void. */
 export function createOuterGroundMaterial(): THREE.MeshBasicMaterial {
   const material = new THREE.MeshBasicMaterial({ color: new THREE.Color('#060a12') })
+  const uniforms = { uLine: { value: new THREE.Color('#1f6f8b') } }
+  material.userData.uniforms = uniforms
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uLine = { value: new THREE.Color('#1f6f8b') }
+    Object.assign(shader.uniforms, uniforms)
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vGridPos;')
       .replace(

@@ -12,6 +12,8 @@ const EXPLOSION_MIN_INTERVAL_MS = 200
 /** After an explosion pattern starts, collision rumbles stay quiet so they don't cut it short. */
 const EXPLOSION_QUIET_MS = 260
 const EXPLOSION_PATTERN = [40, 30, 80]
+/** Repeated over the 1.2 s quake. */
+const TREMOR_PATTERN = [40, 60, 40, 80, 50]
 
 type VibrateNavigator = Navigator & {
   userActivation?: { hasBeenActive: boolean }
@@ -68,6 +70,8 @@ export const haptics = {
     lastRumbleAt = now
     return buzz(20)
   },
+  /** [40, 60, 40, 80, 50] repeated through the ~1.2 s tremor. */
+  tremor: () => buzz([...TREMOR_PATTERN, 0, ...TREMOR_PATTERN, 0, ...TREMOR_PATTERN, 0, ...TREMOR_PATTERN]),
   /**
    * [40, 30, 80] — a Nitro detonation. Throttled to once per 200 ms so a rolling
    * chain reaction doesn't keep restarting (and stalling) the vibration motor.

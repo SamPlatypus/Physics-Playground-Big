@@ -11,7 +11,7 @@
   --color-void: #03050a;
   --color-panel: #070c17;
   --color-panel-2: #0b1222;
-  --color-line: rgb(86 227 255 / 0.18);
+  --color-line: color-mix(in srgb, var(--color-neon) 18%, transparent);
   --color-neon: #38e1ff;
   --color-neon-soft: #9ff0ff;
   --color-plasma: #ff5ad8;
@@ -24,6 +24,25 @@
 
 :root {
   --deck-h: 136px;
+}
+
+/* Theme accents: the UI picks up the active arena theme (set on <html data-theme>). */
+:root,
+[data-theme='industrial'] {
+  --color-neon: #ffc21a;
+  --color-neon-soft: #ffe28a;
+}
+[data-theme='neon'] {
+  --color-neon: #ff3ddc;
+  --color-neon-soft: #ffa8f0;
+}
+[data-theme='pastel'] {
+  --color-neon: #f08a6c;
+  --color-neon-soft: #f8cdbf;
+}
+[data-theme='blueprint'] {
+  --color-neon: #9cc3ff;
+  --color-neon-soft: #e1edff;
 }
 @media (max-height: 500px) {
   :root {
@@ -84,7 +103,7 @@ button {
 .hud-panel {
   background:
     linear-gradient(180deg, rgb(13 21 38 / 0.9), rgb(6 10 20 / 0.9)) padding-box,
-    linear-gradient(180deg, rgb(86 227 255 / 0.32), rgb(86 227 255 / 0.08)) border-box;
+    linear-gradient(180deg, color-mix(in srgb, var(--color-neon) 32%, transparent), color-mix(in srgb, var(--color-neon) 8%, transparent)) border-box;
   border: 1px solid transparent;
   box-shadow:
     0 10px 30px -10px rgb(0 0 0 / 0.7),
